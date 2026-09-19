@@ -1,0 +1,31 @@
+data:
+  raw_dir: data/raw
+  processed_dir: data/processed
+  # Use a supplied complete-year archive, not the plan's example 2016.
+  year: 2025
+  months: [1, 2, 3]
+
+schema:
+  # Actual column mappings will be discovered in Phase 3.
+  alarm_table_prefix: tblAlarmLog
+  alarm_code_col: null
+  alarm_time_col: null
+  alarm_turbine_col: null
+
+detector:
+  method: zscore
+  window: 288
+  threshold: 3.0
+
+replay:
+  speed: 600
+  buffer_events: 2000
+
+server:
+  host: 127.0.0.1
+  port: 8000
+
+llm:
+  base_url_env: LLM_BASE_URL
+  api_key_env: LLM_API_KEY
+  model_env: LLM_MODEL

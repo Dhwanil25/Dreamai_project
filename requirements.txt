@@ -1,0 +1,16 @@
+# Direct dependencies verified on Python 3.13.7, macOS arm64 in Phase 2.
+# Full resolved environment is recorded in requirements.lock.
+pandas==3.0.6
+pyarrow==25.0.1
+numpy==2.5.3
+river==0.26.1
+fastapi==0.141.1
+uvicorn[standard]==0.53.0
+websockets==17.1
+pydantic==2.13.5
+pyyaml==6.0.3
+python-dotenv==1.2.3
+requests==2.34.2
+openai==3.16.2
+pytest==9.1.1
+httpx==0.28.1

@@ -2,13 +2,43 @@
 
 **The industrial AI you teach by talking to it — and it never phones home.**
 
-EARSHOT is a proposed local industrial monitoring application for a hackathon demo. It connects sensor replay, anomaly detection, and operator feedback so a site can retain its own operational knowledge.
+EARSHOT is a local industrial monitoring project for a hackathon demo. Its planned sensor replay, anomaly detection, and operator feedback loop will let a site retain its own operational knowledge.
 
 ## Current status
 
-Phase 0 is complete: the development tools, GitHub authentication, both private reference repositories, and required outbound connectivity have been checked. See the [preflight report](preflight_report.md) for evidence and limitations. The application, detector, and speech integration are not implemented yet; Phase 1 is next.
+Phase 2 is complete: the virtual environment and pinned dependencies are installed, project-relative configuration works, and the package and FastAPI application import successfully. Thirteen configuration tests pass. Business functions and application routes intentionally raise `NotImplementedError`; ingestion, anomaly detection, teaching, speech and replay are not implemented yet. The two policy/parser test files are placeholders, not passing business tests.
+
+Phase 1's reference inventory is available locally at `reference/REUSE_NOTES.md`; reference clones remain Git-ignored. Phase 3 starts only after the dataset placement gate.
 
 This repository is both the workspace and project root. Execution-plan paths under `~/earshot-hackathon/earshot/` resolve here, and the plan's workspace-level `reference/` directory and `preflight_report.md` also live here. Preserve the existing Git repository and origin when scaffolding later phases.
+
+## Setup and scaffold checks
+
+Validated with Python 3.13.7 on macOS arm64. Run from the repository root:
+
+```bash
+python3 -m venv venv
+./venv/bin/python -m pip install --upgrade pip
+./venv/bin/python -m pip install -r requirements.txt -c requirements.lock
+mkdir -p data/raw data/processed
+cp .env.example .env
+./venv/bin/python -m pip check
+./venv/bin/pytest -q
+```
+
+`requirements.txt` pins direct dependencies; `requirements.lock` records the resolved dependency versions from this environment and acts as installation constraints. Other Python versions/platforms have not been validated. Pytest searches only this project's `tests/`, excluding the reference repositories.
+
+The config loader finds `config.yaml` relative to its module, resolves data paths against the project root, and reads the root `.env` without replacing existing environment variables. Schema column names stay unset until Phase 3. The selected year is 2025, months January–March.
+
+`.env.example` uses `EARSHOT_OFFLINE=1`, preserving the local-only requirement rather than the original plan's online default. Keys are optional and unused by this scaffold. The example retains the plan's future provider settings; their availability has not been tested. Runtime offline enforcement and local speech still need implementation.
+
+Start the scaffold process:
+
+```bash
+./venv/bin/uvicorn earshot.server:app --host 127.0.0.1 --port 8000
+```
+
+`http://127.0.0.1:8000/openapi.json` exposes the route contracts. `/`, `/health`, `/teach` and the other application routes are stubs and will fail until Phase 7. The static placeholder is in `ui/index.html`; serving it is deferred with the other routes. Interactive API documentation is disabled so the scaffold does not load CDN assets.
 
 ## First demo
 
@@ -34,7 +64,16 @@ The demo should distinguish measured results, human labels, and any synthetic sc
 
 ## Dataset intake
 
-The supplied datasets are `2024.zip`, `2025.zip`, and `2026.zip` in the user's Downloads directory. All three have readable ZIP directories containing alarm-log members; the exact source paths and archive inventory are recorded in the preflight report. They have not been ingested or moved. Data placement and companion metadata collection happen after Phase 2, before Phase 3. Use one of the supplied years in configuration rather than the original plan's default 2016.
+The supplied datasets are `2024.zip`, `2025.zip`, and `2026.zip` in the user's Downloads directory. All three have readable ZIP directories containing alarm-log members; the exact source paths and archive inventory are recorded in the preflight report. They have not been ingested or moved. `data/raw/` and `data/processed/` exist and are empty at the end of Phase 2.
+
+For the dataset gate, place `2025.zip` in this repository's `data/raw/` without unzipping it. The other two supplied archives can also be placed there for later use. Include these four companion files with their original names:
+
+- `Hill_of_Towie_alarms_description.csv`
+- `Hill_of_Towie_tables_description.csv`
+- `Hill_of_Towie_turbine_fields_description.csv`
+- `Hill_of_Towie_turbine_metadata.csv`
+
+The archive and metadata remain local and Git-ignored. The original plan's `~/earshot-hackathon/earshot/data/raw/` path maps to this repository's `data/raw/`.
 
 Useful context includes timestamp format, sensor units, asset or site identifiers, operating modes, and the meaning of any event labels. Actual columns and coverage will be discovered during Phase 3.
 
@@ -42,6 +81,7 @@ Before choosing a detector, inspect sampling intervals, missing values, repeated
 
 ## Project documents
 
+- [Phase 2 scaffold validation](docs/PHASE_2_REPORT.md)
 - [Phase 0 preflight report](preflight_report.md)
 - [Original elevator pitch](docs/PITCH.md)
 - [Implementation and presentation plan](docs/DEMO_PLAN.md)

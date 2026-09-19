@@ -20,6 +20,8 @@ models/
 recordings/
 reference/
 *.zip
+*.parquet
+demo/*.mp4
 *.sqlite
 *.sqlite3
 *.sqlite-wal
