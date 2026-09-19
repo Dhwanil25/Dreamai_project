@@ -185,6 +185,8 @@ class Runtime:
             "generation": self._generation,
             "sequence": self._sequence,
             "position": self.replayer.position,
+            "source_start": getattr(self.replayer, "source_start", None),
+            "source_end": getattr(self.replayer, "source_end", None),
             "speed": self.replayer.speed,
             "paused": self.replayer.paused,
             "exhausted": self.replayer.exhausted,
@@ -434,9 +436,10 @@ def create_app(runtime_factory: Callable[[], Runtime] | None = None) -> FastAPI:
                 if not request.ts:
                     raise HTTPException(422, detail="Seek requires a timestamp")
                 try:
-                    runtime.replayer.seek(request.ts)
+                    target = runtime.replayer.validate_seek(request.ts)
+                    runtime.replayer.seek(target)
                 except (ValueError, TypeError) as error:
-                    raise HTTPException(422, detail="Invalid replay timestamp") from error
+                    raise HTTPException(422, detail={"code": "invalid_replay_timestamp", "message": str(error)}) from error
                 runtime.policy.reset_stream()
                 runtime._generation = runtime.replayer.generation
                 runtime._sequence = 0

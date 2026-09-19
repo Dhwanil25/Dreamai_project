@@ -93,6 +93,8 @@ The policy labels matching buffered alarms and counter-examples, trains a local 
 
 Undo revokes the rule and reconstructs the classifier from remaining batches. Restart restores accepted corrections and training; detector histories and stream counters start fresh. Seek clears recent observations while retaining teaching. Numeric sensor snapshots separately update the anomaly detector. Explicit critical/emergency events and escalation rules stay visible; the source's stopping flag alone does not prove a dangerous incident. The prototype does not control equipment.
 
+The recording date control shows the available source range. Both the browser and API reject dates outside that range without clearing the existing records or corrections. For this dataset the combined alarm/sensor recording runs from **2025-01-01 00:00:00** through **2025-03-31 23:50:00**; selecting a current calendar date cannot produce new plant data.
+
 The ring holds 2,000 merged observations. Its trailing-hour count is buffer-limited and is not extrapolated from a shorter interval. With no prior relevant correction, teaching the selected T04 example changes four buffered records and lowers this hour from **276 to 272**, while other scopes remain visible.
 
 ## Live provider status and voice
@@ -119,7 +121,7 @@ EARSHOT_OFFLINE=1 LLM_API_KEY= ELEVENLABS_API_KEY= ./venv/bin/pytest -q
 curl -s http://127.0.0.1:8000/evidence
 ```
 
-With optional Playwright and Chrome installed, run `./venv/bin/python scripts/verify_demo_tabs.py` for read-only desktop/mobile navigation, market calculator and evidence checks. `./venv/bin/python scripts/verify_browser.py` additionally exercises real text teaching and Undo; its voice mocks test browser behavior and are explicitly not provider proof. Both write local reports and screenshots under `data/processed/`.
+With optional Playwright and Chrome installed and the replay paused, run `./venv/bin/python scripts/verify_demo_tabs.py` for read-only desktop/mobile navigation, recording-date validation, market calculator and evidence checks. `./venv/bin/python scripts/verify_browser.py` additionally exercises real text teaching and Undo; its voice mocks test browser behavior and are explicitly not provider proof. Both write local reports and screenshots under `data/processed/`.
 
 `/health`, `/stats`, `/console`, `/rules`, `/evidence` and `/openapi.json` expose runtime state and contracts. `/stream` publishes events and state changes. `/teach`, `/listen`, `/undo/{rule_id}`, `/killswitch` and `/replay` accept operator actions; `/speak` requests fresh provider readback. Missing data and unavailable providers produce explicit errors rather than fabricated results.
 

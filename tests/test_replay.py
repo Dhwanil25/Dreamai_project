@@ -333,6 +333,48 @@ def test_invalid_seek_is_atomic(sources):
     assert replay.generation == 0 and replay.position is None
 
 
+@pytest.mark.parametrize('include_scada', [False, True])
+def test_interactive_seek_bounds_include_all_selected_sources(sources, real_rows, include_scada):
+    replay = Replayer(*sources, include_scada=include_scada)
+    frames = [real_rows['alarms']] + ([real_rows['sensors']] if include_scada else [])
+    start = min(frame.ts.min() for frame in frames)
+    end = max(frame.ts.max() for frame in frames)
+    assert replay.source_start == start.isoformat()
+    assert replay.source_end == end.isoformat()
+    assert replay.validate_seek(start.isoformat()) == start
+    assert replay.validate_seek(end.isoformat()) == end
+    # A valid gap between events is a seek position, not an invalid date.
+    assert replay.validate_seek(start + pd.Timedelta(nanoseconds=1)) == start + pd.Timedelta(nanoseconds=1)
+    aware = start.tz_localize('UTC').tz_convert('America/Los_Angeles')
+    assert replay.validate_seek(aware.isoformat()) == start
+    assert replay.position is None and replay.generation == 0 and not replay.buffer
+
+
+def test_out_of_recording_validation_preserves_buffer_and_next_real_event(sources, real_rows):
+    async def run():
+        replay = Replayer(*sources, include_scada=False, speed=1e12)
+        stream = replay.stream()
+        first = await anext(stream)
+        replay.pause()
+        before = (replay.position, replay.generation, replay.paused, replay.exhausted, list(replay.buffer))
+        invalid = [pd.Timestamp(replay.source_start) - pd.Timedelta(nanoseconds=1),
+                   pd.Timestamp(replay.source_end) + pd.Timedelta(nanoseconds=1),
+                   '2026-09-01T06:40:00']
+        for target in invalid:
+            with pytest.raises(ValueError) as caught:
+                replay.validate_seek(target)
+            assert replay.source_start in str(caught.value) and replay.source_end in str(caught.value)
+            assert (replay.position, replay.generation, replay.paused, replay.exhausted, list(replay.buffer)) == before
+        replay.resume()
+        second = await anext(stream)
+        expected = real_rows['alarms'].sort_values(['ts', 'turbine_id', 'alarm_code'], kind='stable').iloc[1]
+        assert _alarm_tuple(second) == tuple(expected)
+        assert list(replay.buffer) == [first, second]
+        await stream.aclose()
+        await replay.aclose()
+    asyncio.run(run())
+
+
 def test_optional_scada_absent_but_explicit_missing_is_error(sources, tmp_path, monkeypatch):
     monkeypatch.setattr(module, 'CONFIG', SimpleNamespace(
         data=SimpleNamespace(processed_dir=tmp_path / 'missing'), replay=CONFIG.replay))

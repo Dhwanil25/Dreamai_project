@@ -26,6 +26,7 @@ from earshot.config import CONFIG, PROJECT_ROOT
 from earshot.detector import create_detector
 from earshot import parse as parser
 from earshot.policy import PolicyLayer
+from earshot.replay import Replayer
 from earshot import server, voice
 
 
@@ -713,6 +714,49 @@ def test_replay_controls_and_bad_timestamp(live):
     assert not live.runtime.replayer.paused
     assert_error(live.client.post('/replay', json={'action': 'seek'}), 422)
     assert_error(live.client.post('/replay', json={'action': 'erase'}), 422)
+
+
+def test_out_of_recording_api_seek_preserves_current_records_and_teaching(runtime, source, tmp_path):
+    """A wrong year must not turn populated replay into an empty completed view."""
+    path = tmp_path / 'actual-recent-alarms.parquet'
+    frame = pd.DataFrame(source.recent)
+    frame.to_parquet(path, index=False)
+    replay = Replayer(path, include_scada=False)
+    replay.seek(frame.ts.max())
+    replay.buffer.extend(deepcopy(source.recent))
+    replay.pause()
+    actual = server.Runtime(replay, runtime.policy, runtime.vocabulary, runtime.baseline)
+    application = server.create_app(runtime_factory=lambda: actual)
+    with TestClient(application) as client:
+        taught = teach(client)
+        before = client.get('/console').json()
+        state_before = actual.policy.learning_state()
+        audit_before = actual.audit.snapshot()
+        assert before['events'] and before['rules']
+        assert before['stats']['replay']['source_start'] == frame.ts.min().isoformat()
+        assert before['stats']['replay']['source_end'] == frame.ts.max().isoformat()
+        invalid = [frame.ts.min() - pd.Timedelta(nanoseconds=1),
+                   frame.ts.max() + pd.Timedelta(nanoseconds=1),
+                   pd.Timestamp('2026-09-01T06:40:00')]
+        for target in invalid:
+            response = client.post('/replay', json={'action': 'seek', 'ts': target.isoformat()})
+            error = assert_error(response, 422)['error']
+            assert error['code'] == 'invalid_replay_timestamp'
+            assert replay.source_start in error['message'] and replay.source_end in error['message']
+            after = client.get('/console').json()
+            for key in ('events', 'rules', 'generation', 'sequence'):
+                assert after[key] == before[key]
+            for key in ('position', 'paused', 'exhausted', 'generation', 'sequence'):
+                assert after['stats']['replay'][key] == before['stats']['replay'][key]
+            assert actual.policy.learning_state() == state_before
+            assert actual.audit.snapshot() == audit_before
+            assert len(replay.buffer) == len(source.recent)
+        valid = client.post('/replay', json={'action': 'seek', 'ts': replay.source_end})
+        assert valid.status_code == 200
+        assert valid.json()['generation'] == before['generation'] + 1
+        assert actual.policy.learning_state() == state_before
+        assert client.get('/rules').json() == before['rules']
+        assert client.post('/undo/' + taught['rule_id']).status_code == 200
 
 
 def test_failed_replay_control_returns_actionable_error(live):

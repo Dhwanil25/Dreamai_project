@@ -230,6 +230,31 @@ class Replayer:
         return self._position
 
     @property
+    def source_start(self) -> str:
+        """First timestamp in the selected alarm and sensor source files."""
+        return pd.Timestamp(self._start).isoformat()
+
+    @property
+    def source_end(self) -> str:
+        """Last timestamp in the selected sources, including sensor snapshots."""
+        return pd.Timestamp(self._end).isoformat()
+
+    def validate_seek(self, ts: str | datetime) -> pd.Timestamp:
+        """Validate an interactive seek without changing any replay state.
+
+        The inclusive bounds cover all selected sources. Intermediate times
+        without an exact event remain valid: replay advances to the next event.
+        Low-level ``seek`` retains its existing before/after-recording behavior.
+        """
+        target = _timestamp(ts)
+        if not self._start <= target.value <= self._end:
+            raise ValueError(
+                f"Replay timestamp is outside the recording. Choose between "
+                f"{self.source_start} and {self.source_end} (inclusive)."
+            )
+        return target
+
+    @property
     def paused(self) -> bool:
         return self._paused
 

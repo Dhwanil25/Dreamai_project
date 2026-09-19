@@ -110,11 +110,64 @@ def main() -> None:
             expect(page.locator("#modelVersion")).not_to_have_text("v—")
             page.wait_for_function("window.__tabChecks.sockets.some(socket=>socket.readyState===1)", timeout=10000)
             report["default_overview"] = True
+            baseline = read("/stats")["baseline"]
+            overview_counts = {"overviewRecords": baseline["counts"]["record_count"],
+                               "overviewTurbines": baseline["counts"]["turbine_count"]}
+            for identifier, count in overview_counts.items():
+                expect(page.locator("#" + identifier)).to_have_text(f"{count:,}")
+            pareto = page.evaluate("value=>Number(value).toLocaleString('en-US',{maximumFractionDigits:1})+'%'",
+                                   baseline["pareto"]["top10_share_pct"])
+            expect(page.locator("#overviewPareto")).to_have_text(pareto)
+            report["overview_matches_baseline"] = {**overview_counts, "overviewPareto": pareto}
 
             click_tab("console")
             expect(page.locator("#connectionText")).to_contain_text("connected")
             expect(page.locator("#alarmFeed .event").first).to_be_visible()
             expect(page.locator("#rateNumber")).not_to_have_text("—")
+
+            # An unavailable date must be rejected by native input validation
+            # before any replay request. A paused stream makes unchanged-row
+            # assertions independent of normal playback advancement.
+            range_before = read("/stats")["replay"]
+            assert range_before["paused"], "Run read-only seek validation with the replay already paused"
+            start, end = range_before["source_start"], range_before["source_end"]
+            assert start and end, "The backend must expose the actual recording bounds"
+            timestamp = page.locator("#replayTimestamp")
+            expect(timestamp).to_have_attribute("min", start)
+            expect(timestamp).to_have_attribute("max", end)
+            expect(page.locator("#replayNote")).to_contain_text(start.replace("T", " "))
+            expect(page.locator("#replayNote")).to_contain_text(end.replace("T", " "))
+            previous_timestamp = timestamp.input_value()
+            previous_edited = timestamp.get_attribute("data-edited")
+            rows_before = page.locator("#alarmFeed .event").evaluate_all("rows=>rows.map(row=>row.dataset.eventId)")
+            request_offset = len(requests)
+            range_check = {"source_start": start, "source_end": end,
+                           "invalid_timestamp": "2026-09-01T06:40:00", "generation_before": range_before["generation"]}
+            report["replay_input_bounds"] = range_check
+            try:
+                # Chrome normalizes zero seconds out of datetime-local values.
+                timestamp.fill(range_check["invalid_timestamp"].removesuffix(":00"))
+                page.locator("#seekReplay").click()
+                page.wait_for_timeout(250)
+                validity = timestamp.evaluate("input=>({valid:input.validity.valid,rangeOverflow:input.validity.rangeOverflow,message:input.validationMessage})")
+                range_check["native_validity"] = validity
+                assert not validity["valid"] and validity["rangeOverflow"] and validity["message"]
+                attempted = [request for request in requests[request_offset:]
+                             if request["method"] == "POST" and urlparse(request["url"]).path == "/replay"]
+                assert not attempted, "Out-of-range input attempted a /replay POST"
+                range_after = read("/stats")["replay"]
+                rows_after = page.locator("#alarmFeed .event").evaluate_all("rows=>rows.map(row=>row.dataset.eventId)")
+                assert range_after["generation"] == range_before["generation"]
+                assert range_after["sequence"] == range_before["sequence"]
+                assert range_after["position"] == range_before["position"]
+                assert rows_after == rows_before
+                range_check.update(no_replay_post=True, rows_unchanged=True, generation_unchanged=True)
+            finally:
+                timestamp.fill(previous_timestamp)
+                timestamp.evaluate("(input,previous)=>{if(previous===null)delete input.dataset.edited;else input.dataset.edited=previous;}", previous_edited)
+                range_check["field_restored"] = timestamp.input_value() == previous_timestamp
+            assert range_check["field_restored"]
+
             page.locator("#teachText").fill("Unsaved browser navigation check — do not submit")
             page.evaluate("window.__tabChecks.feed=document.getElementById('alarmFeed');window.__tabChecks.socketCount=window.__tabChecks.sockets.length")
             initial_ids = page.locator("#alarmFeed .event").evaluate_all("rows=>rows.map(row=>row.dataset.eventId)")
