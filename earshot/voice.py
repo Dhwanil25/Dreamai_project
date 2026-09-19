@@ -1,5 +1,14 @@
 """Voice I/O contracts; importing this module creates no provider clients."""
 
+import os
+
+OFFLINE_MODE = False
+
+
+def offline_enabled() -> bool:
+    """Consult both live application and environment outbound-call controls."""
+    return OFFLINE_MODE or os.getenv("EARSHOT_OFFLINE") == "1"
+
 
 class OfflineError(RuntimeError):
     """A requested voice-provider operation is unavailable in offline mode."""
@@ -13,7 +22,9 @@ def transcribe(audio_bytes: bytes) -> str:
     interpret the transcript as a rule or update policy. This scaffold always
     raises without recording, storing, sending or decoding audio.
     """
-    raise NotImplementedError
+    if offline_enabled():
+        raise OfflineError("Voice transcription is unavailable in this phase; offline mode blocks provider calls")
+    raise NotImplementedError("Voice transcription is scheduled for a later phase")
 
 
 def speak(text: str) -> bytes:
@@ -24,4 +35,6 @@ def speak(text: str) -> bytes:
     audio or change policy. This scaffold always raises without network,
     filesystem or audio-device access.
     """
-    raise NotImplementedError
+    if offline_enabled():
+        raise OfflineError("Voice synthesis is unavailable in this phase; offline mode blocks provider calls")
+    raise NotImplementedError("Voice synthesis is scheduled for a later phase")

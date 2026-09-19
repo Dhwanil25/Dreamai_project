@@ -2,9 +2,11 @@
 
 **The industrial AI you teach by talking to it — and it never phones home.**
 
-EARSHOT is a local industrial monitoring project for a hackathon demo. Its text parser, anomaly detectors and teaching engine run locally; sensor replay and voice integration are still upcoming.
+EARSHOT is a local industrial monitoring project for a hackathon demo. Its text parser, anomaly detectors, teaching engine and replay API run locally; the interactive operator console and voice integration are still upcoming.
 
 ## Current status
+
+Phase 7 connects real chronological replay, text teaching, undo, statistics and saved rules to HTTP and WebSockets. Two connected clients receive the same updates, and the offline switch prevents new provider calls while local teaching continues. Replay preserves **68,891 alarms and all 50,327,215 readings** in **272,039 sensor snapshots**. A live 600× run delivered **21.30 events/second** during a measured ten-second window. All **364 tests passed**. See [the Phase 7 report](docs/PHASE_7_REPORT.md) for live API results, full-source reconciliation and limitations.
 
 Phase 6 turns operator text into a validated correction proposal using the site's real vocabulary. It recognizes turbine aliases, supported alarm descriptions and suppress/collapse/escalate instructions; unknown, ambiguous or unsupported requests return no rule. Offline parsing needs no keys or network. An optional compatible online parser has bounded retries and falls back locally. See [the Phase 6 report](docs/PHASE_6_REPORT.md) for validation and the text-to-learning demonstration.
 
@@ -14,13 +16,13 @@ Phase 4 provides the reproducible alarm baseline. January–March 2025 contains 
 
 Phase 3 also produced **50,327,215 numeric SCADA readings**. All 21 known turbines are present; two alarms have the additional unmapped station ID `91` and remain in site-wide totals. The turbine-rate denominator uses the 21 metadata turbines and excludes those two records. See [the Phase 3 report](docs/PHASE_3_REPORT.md) for ingestion details.
 
-The backend serves the local scaffold page and a health response. Text parsing, detection and teaching are available through the Python library and tests; live business endpoints return structured HTTP 501 responses until Phase 7. Speech and replay remain unimplemented.
+The backend now serves live APIs and a local status page. The interactive console and microphone integration are later phases. Missing inputs leave the status page and health endpoint available, with structured HTTP 503 responses from unavailable operations.
 
 Phase 1's reference inventory is available locally at `reference/REUSE_NOTES.md`; reference clones remain Git-ignored. Raw data, processed datasets and their detailed local reports are also Git-ignored.
 
 This repository is both the workspace and project root. Execution-plan paths under `~/earshot-hackathon/earshot/` resolve here, and the plan's workspace-level `reference/` directory and `preflight_report.md` also live here. Preserve the existing Git repository and origin when scaffolding later phases.
 
-## Setup and scaffold checks
+## Setup and checks
 
 Validated with Python 3.13.7 on macOS arm64. Run from the repository root:
 
@@ -40,17 +42,47 @@ The config loader finds `config.yaml` relative to its module, resolves data path
 
 `.env.example` uses `EARSHOT_OFFLINE=1`. The parser enforces this before constructing a provider client and before each call; local speech still needs implementation. With offline mode off and all three `LLM_*` settings populated, the optional parser sends the utterance and controlled vocabulary to the configured endpoint. Policy learning, event data and model weights remain local. Keep offline mode on for the never-phones-home demonstration. No LLM credentials were available for live provider validation; its request, validation and fallback paths were tested with local mocks.
 
-Start the scaffold process:
+Start the local server from the repository root after the dataset, baseline and vocabulary have been built:
 
 ```bash
 ./venv/bin/uvicorn earshot.server:app --host 127.0.0.1 --port 8000
 ```
 
-Open `http://127.0.0.1:8000/` to see the scaffold page. `/health` returns HTTP 200 with `status: "scaffold"`, `phase: 6` and ingestion, parsing, detection and teaching flags set to true. These flags describe available Python libraries, not live endpoints or automatic dataset checks. `ok: true` means the server is responding. `/openapi.json` exposes the route contracts. Interactive API documentation is disabled so the scaffold does not load CDN assets.
+Open `http://127.0.0.1:8000/` to see the status page. `/health` reports `phase: 7`, the replay position and model version; `ok: true` means initialization succeeded and replay has not failed. `/openapi.json` exposes route contracts. Interactive API documentation is disabled so the app does not load CDN assets. Replay starts when the server starts and advances even when no browser is connected. Run one worker: the clock, policy and correction journal have one owner.
 
-`/stats`, `/rules`, `/teach`, `/undo/{rule_id}` and `/killswitch` return HTTP 501 with a structured `not_implemented` explanation until their implementation phase. `/stream` sends an explanatory error message and closes normally. These responses do not train a model, suppress alarms or change offline controls.
+`/stats`, `/rules`, `/teach`, `/undo/{rule_id}` and `/killswitch` are live. `/stream` broadcasts real events and verdicts, teaching/undo/link updates, and dynamic statistics every two seconds. Malformed requests return structured 422 errors; unavailable operations return structured 503 errors. Unparseable teaching text returns HTTP 200 with `parsed: false` and does not change the model.
 
 If a server was running before a code update, stop it with Ctrl+C and rerun the startup command. The original Phase 2 route stubs raised unhandled `NotImplementedError`, causing HTTP 500 even on the home page and health endpoint; the scaffold now handles these cases explicitly.
+
+## Verify the live API
+
+With the server running, open another terminal in this directory:
+
+```bash
+./venv/bin/python scripts/verify_live_api.py
+```
+
+The script connects two WebSocket clients, captures five full events, teaches two corrections, verifies teaching after the offline switch, and measures the stream rate. It then undoes only its own rules and restores the prior offline setting. The audit journal keeps the teaching/undo revisions. Full local evidence is written to `data/processed/phase7_api_validation.json`; source events and the journal remain Git-ignored.
+
+To apply a correction yourself:
+
+```bash
+curl -s http://127.0.0.1:8000/health
+curl -s -X POST http://127.0.0.1:8000/teach \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"ignore the cable untwist alarm on turbine four"}'
+curl -s http://127.0.0.1:8000/rules
+curl -s -X POST http://127.0.0.1:8000/killswitch \
+  -H 'Content-Type: application/json' -d '{"on":true}'
+```
+
+Use the returned `rule_id` with `POST /undo/{rule_id}` to revoke your correction. A rule can be accepted before a matching event reaches the buffer; `newly_suppressed_count: 0` means no currently buffered event changed. The default cable-untwist/T04 event occurs later in January, so the early live replay may have no positive example yet.
+
+SCADA is read in bounded time slices and grouped by timestamp/turbine, then merged with alarms. Snapshot events have `alarm_code: null` and actual `signals`; alarm events retain their original fields and empty `signals`. Sensor values are neither carried forward onto alarm rows nor invented. Sensor observations update the detector but do not inflate alarm counts or serve as counter-examples for a code-specific correction. The live ring holds the last 2,000 merged observations, so the available alarm training set can contain fewer than 2,000 rows.
+
+`alarms_per_hour_current` counts visible buffered alarms within the trailing simulated hour; its clock advances with sensor observations. It remains buffer-limited. The 600× speed controls timestamp spacing, not a fixed events-per-second target. `Replayer` also exposes pause, resume, seek and speed controls in Python; HTTP playback controls are not part of this phase. Seeking clears observation history while retaining taught rules and classifier state.
+
+The offline switch gates optional application provider calls; it does not disable the computer's Wi-Fi or cancel a request already sent. Online results are rechecked before being applied after a switch. Voice remains unavailable. The validation server was shut down cleanly after testing; use the startup command above to run it again.
 
 ## First demo
 
@@ -137,7 +169,7 @@ Floods use fixed, clock-aligned, half-open ten-minute bins containing more than 
 
 The **12/hour operator-console reference** is an approximate average workload benchmark, not a universal safety limit. The site log's ratio to that reference is descriptive because annunciation, routing and staffing are unknown. Per-turbine rates are asset diagnostics. [ISA background](https://www.isa.org/intech-home/2016/may-june/features/getting-the-most-from-your-safety-alarms)
 
-Only aggregate `demo/baseline_stats.json` is tracked for later UI use. Raw records and the detailed local report remain Git-ignored. The `/stats` API and dashboard integration are still scheduled for later phases.
+Only aggregate `demo/baseline_stats.json` is tracked for UI use. Raw records and the detailed local report remain Git-ignored. The `/stats` API now includes this baseline alongside live policy statistics; the operator console follows in Phase 8.
 
 ## Teach with text and see what changes
 
@@ -156,7 +188,7 @@ Teaching is a sequence:
 3. The policy rescans its buffer and applies the correction to future matching events. Ordinary code rules take effect immediately; the classifier also changes its weights. A `learned` pattern uses classifier probability within its authorized scope.
 4. `policy.undo(rule.rule_id)` removes the correction, rebuilds the classifier from remaining training batches and restores buffered visibility.
 
-This is supervised feedback from the operator's instruction. It does not prove an event is a false alarm or train a general-purpose language model. Voice recording and the browser's teach button are later phases.
+This is supervised feedback from the operator's instruction. It does not prove an event is a false alarm or train a general-purpose language model. The live `/teach` API now runs this sequence. Voice recording and the browser's teach button are later phases.
 
 The cached vocabulary contains 22 observed station IDs, 192 observed codes, seven documented alarm descriptions and metadata-derived aliases for the 21 known turbines. Station `91` has no invented turbine number. Undocumented codes can be referenced explicitly by number, but their meanings are not guessed. The generator-winding-temperature example in the plan has no matching description here, so it returns no rule.
 
@@ -214,7 +246,7 @@ with TemporaryDirectory() as directory:
 PY
 ```
 
-`PolicyLayer(create_detector(), 2000)` normally saves to `data/processed/rules.jsonl`. Use one live writer per ledger and unique rule IDs. Restart reconstructs active rules and the classifier from recorded, weighted training batches. Detector histories, replay buffers and counters begin fresh. Invalid or truncated journal records raise a clear error; complete learn records without a commit are ignored. The original validation rule was undone; the local audit history remains at version 3 with no active rules.
+`PolicyLayer(create_detector(), 2000)` normally saves to `data/processed/rules.jsonl`. Use one live writer per ledger and unique rule IDs. Restart reconstructs active rules and the classifier from recorded, weighted training batches. Detector histories, replay buffers and counters begin fresh. Invalid or truncated journal records raise a clear error; complete learn records without a commit are ignored. Demo validations undo their own corrections and retain the audit revisions.
 
 `config.yaml` selects `detector.method` (`zscore` or `hst`) and the policy probability, learning rate and collapse window. Detectors consume actual numeric `signals`/`features`, or `signal` plus `value`, independently per asset. Alarm-only events have anomaly score zero. HST requires a stable feature schema established by its first observed vector.
 
@@ -222,6 +254,7 @@ PY
 
 ## Project documents
 
+- [Phase 7 replay and live API validation](docs/PHASE_7_REPORT.md)
 - [Phase 6 text parsing and teaching validation](docs/PHASE_6_REPORT.md)
 - [Phase 5 teaching engine validation](docs/PHASE_5_REPORT.md)
 - [Phase 4 baseline validation](docs/PHASE_4_REPORT.md)

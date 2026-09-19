@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>EARSHOT — Phase 6 text teaching parser</title>
+    <title>EARSHOT — Phase 7 live replay API</title>
     <style>
       :root {
         color-scheme: dark;
@@ -38,24 +38,23 @@
   <body>
     <main>
       <h1>EARSHOT</h1>
-      <p class="status">Phase 6 text teaching parser</p>
+      <p class="status">Phase 7 live replay API</p>
       <p>
-        Local ingestion, anomaly detection, operator teaching, and text parsing
-        are available in the Python library. Sensor replay and voice capture remain unavailable.
-        Live APIs are planned for Phase 7.
+        Real alarm events and sensor snapshots now replay through the local API.
+        Text teaching, undo, saved rules, statistics, and the offline switch are live.
+        The operator console and voice capture are later phases.
       </p>
       <p>
-        In Python, <code>parse_utterance(text, context)</code> proposes a rule
-        from the real dataset vocabulary. Apply an accepted rule with
-        <code>policy.learn(rule)</code>. Exercise parsing with
-        <code>tests/test_parse.py</code> and read
-        <code>docs/PHASE_6_REPORT.md</code> for the results.
+        Send an operator instruction to <code>POST /teach</code> to parse and
+        apply a local correction. Connect to <code>WS /stream</code> for events
+        and updates, or use <code>POST /undo/{rule_id}</code> to revoke a correction.
+        Read <code>docs/PHASE_7_REPORT.md</code> for verification and examples.
       </p>
       <p>
         Exercise the local teaching engine with <code>tests/test_policy.py</code>
         and read the results in <code>docs/PHASE_5_REPORT.md</code>.
-        Backend health reports library capabilities; it does not indicate that
-        the live APIs are ready.
+        Health reports the replay position and model version. If local inputs
+        cannot be loaded, it explains why the runtime is unavailable.
       </p>
       <p>
         Inspect the dataset with <code>scripts/explore_schema.py</code> and
@@ -67,10 +66,13 @@
         Generate baseline metrics with <code>scripts/compute_baseline.py</code>.
         Read the local report at <code>data/processed/baseline_report.md</code>
         and its machine-readable results at <code>demo/baseline_stats.json</code>.
-        This page does not display computed results or live monitoring.
+        The links below expose live API results. This page is the status page;
+        the interactive monitoring console is the next phase.
       </p>
       <nav aria-label="Backend inspection">
         <a href="/health">Backend health</a>
+        <a href="/stats">Live statistics</a>
+        <a href="/rules">Active rules</a>
         <a href="/openapi.json">API schema</a>
       </nav>
     </main>

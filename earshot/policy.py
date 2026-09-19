@@ -42,6 +42,7 @@ class _Observation:
     timestamp: float
     verdict: Verdict
     collapse_after: dict[tuple[str, str], float]
+    counted: bool
 
 
 class PolicyLayer:
@@ -63,6 +64,7 @@ class PolicyLayer:
         self.detector = detector
         self._detectors: dict[str, Detector] = {}
         self._records: deque[_Observation] = deque(maxlen=int(buffer_size))
+        self._replay_buffer: deque | None = None
         self.rules_path = Path(rules_path) if rules_path is not None else CONFIG.data.processed_dir / "rules.jsonl"
         self.learning_rate, self.nuisance_threshold, self.collapse_window_s = self._settings(
             CONFIG.policy.learning_rate,
@@ -104,8 +106,31 @@ class PolicyLayer:
         return tuple(SuppressionRule.from_json(rule.to_json()) for rule in self._rules.values())
 
     @property
-    def buffer(self) -> list[dict[str, Any]]:
+    def buffer(self) -> list[dict[str, Any]] | deque:
+        if self._replay_buffer is not None:
+            return self._replay_buffer
         return [deepcopy(record.event) for record in self._records]
+
+    def bind_replay_buffer(self, buffer: deque) -> None:
+        """Expose the replayer's live ring while retaining private scoring copies.
+
+        The single replay consumer must score every yielded event exactly once.
+        Internal immutable snapshots protect accepted decisions from subsequent
+        caller edits to the shared input deque. Sizes must agree.
+        """
+        if not isinstance(buffer, deque) or buffer.maxlen != self._records.maxlen:
+            raise ValueError("Replay and policy buffers must have the same bounded size")
+        with self._lock:
+            self._replay_buffer = buffer
+
+    def reset_stream(self) -> None:
+        """Clear observation history after seek, preserving taught corrections."""
+        with self._lock:
+            self._records.clear()
+            self._detectors.clear()
+            self._shown = self._suppressed = 0
+            self._collapse_boundary.clear()
+            self._collapse_live.clear()
 
     @property
     def verdicts(self) -> list[Verdict]:
@@ -223,10 +248,11 @@ class PolicyLayer:
             detector.update(numeric)
             if len(self._records) == self._records.maxlen:
                 self._collapse_boundary = self._records[0].collapse_after.copy()
-            self._records.append(_Observation(snapshot, features, when, verdict, collapsed.copy()))
+            counted = code is not None
+            self._records.append(_Observation(snapshot, features, when, verdict, collapsed.copy(), counted))
             self._collapse_live = collapsed
-            self._shown += int(verdict.show)
-            self._suppressed += int(not verdict.show)
+            self._shown += int(counted and verdict.show)
+            self._suppressed += int(counted and not verdict.show)
             return verdict
 
     def _append(self, record: dict) -> None:
@@ -257,6 +283,9 @@ class PolicyLayer:
         collapse_seen: dict[tuple[str, str], float] = {}
         for position, record in enumerate(self._records):
             event = record.event
+            if rule.scope["alarm_code"] is not None and not record.counted:
+                # A normal sensor sample is not a labelled non-nuisance alarm.
+                continue
             matching = rule.matches(event)
             positive = matching and rule.action != "escalate" and not self._protected(event)
             if rule.action == "collapse" and positive:
@@ -346,8 +375,9 @@ class PolicyLayer:
                 previous = record.verdict
                 verdict = self._verdict(record.event, record.features, record.timestamp, previous.anomaly_score, collapsed)
                 changed += int(verdict != previous)
-                self._shown += int(verdict.show) - int(previous.show)
-                self._suppressed += int(not verdict.show) - int(not previous.show)
+                if record.counted:
+                    self._shown += int(verdict.show) - int(previous.show)
+                    self._suppressed += int(not verdict.show) - int(not previous.show)
                 record.verdict = verdict
                 record.collapse_after = collapsed.copy()
             self._collapse_live = collapsed
@@ -363,7 +393,7 @@ class PolicyLayer:
         with self._lock:
             total = self._shown + self._suppressed
             end = max((record.timestamp for record in self._records), default=0.0)
-            current = sum(record.verdict.show and end - 3600 < record.timestamp <= end for record in self._records)
+            current = sum(record.counted and record.verdict.show and end - 3600 < record.timestamp <= end for record in self._records)
             return {"alarms_shown": self._shown, "alarms_suppressed": self._suppressed,
                     "suppression_rate": self._suppressed / total if total else 0.0,
                     "model_version": self._model_version, "active_rules": len(self._rules),
