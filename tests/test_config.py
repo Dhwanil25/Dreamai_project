@@ -17,12 +17,17 @@ def test_paths_resolve_from_project_not_launch_directory(tmp_path, monkeypatch):
     assert isinstance(loaded.data.raw_dir, Path)
 
 
-def test_yaml_values_and_unknown_schema_remain_unmodified():
+def test_yaml_values_and_discovered_schema_remain_unmodified():
     assert CONFIG.data.year == 2025
     assert CONFIG.data.months == [1, 2, 3]
-    assert CONFIG.schema.alarm_code_col is None
-    assert CONFIG.schema.alarm_time_col is None
-    assert CONFIG.schema.alarm_turbine_col is None
+    assert CONFIG.schema.alarm_code_col == "Alarmcode"
+    assert CONFIG.schema.alarm_time_col == "TimeOn"
+    assert CONFIG.schema.alarm_turbine_col == "StationNr"
+    assert CONFIG.schema.alarm_end_time_col == "TimeOff"
+    assert CONFIG.schema.scada_time_col == "TimeStamp"
+    assert CONFIG.schema.scada_turbine_col == "StationId"
+    assert CONFIG.schema.scada_exclude_signals == ["wtc_ActRegSt_endvalue"]
+    assert CONFIG.schema.timestamp_timezone_assumption == "UTC"
 
 
 def test_root_search_walks_up_from_module_file(tmp_path):

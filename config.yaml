@@ -6,11 +6,18 @@ data:
   months: [1, 2, 3]
 
 schema:
-  # Actual column mappings will be discovered in Phase 3.
+  # Discovered from the supplied 2025 ZIP and recorded in schema_report.md.
   alarm_table_prefix: tblAlarmLog
-  alarm_code_col: null
-  alarm_time_col: null
-  alarm_turbine_col: null
+  alarm_code_col: Alarmcode
+  alarm_time_col: TimeOn
+  alarm_turbine_col: StationNr
+  alarm_end_time_col: TimeOff
+  # Stopping is supplied by the code-description lookup, not the alarm log.
+  scada_time_col: TimeStamp
+  scada_turbine_col: StationId
+  scada_exclude_signals: [wtc_ActRegSt_endvalue]  # Categorical text, not numeric.
+  # The output contract assumes UTC; the source's timezone is unverified.
+  timestamp_timezone_assumption: UTC
 
 detector:
   method: zscore

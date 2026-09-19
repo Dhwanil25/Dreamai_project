@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>EARSHOT — Phase 2 skeleton</title>
+    <title>EARSHOT — Phase 3 dataset ingestion</title>
     <style>
       :root {
         color-scheme: dark;
@@ -38,12 +38,19 @@
   <body>
     <main>
       <h1>EARSHOT</h1>
-      <p class="status">Phase 2 skeleton</p>
+      <p class="status">Phase 3 dataset ingestion</p>
       <p>
-        The project scaffold is ready. Sensor replay, anomaly
-        detection, voice corrections, and local learning are not implemented.
+        Local schema discovery and dataset ingestion are implemented through
+        the command-line scripts. Sensor replay, anomaly detection, voice
+        corrections, and local learning are not implemented.
       </p>
-      <p>No dataset has been loaded. The demonstration scenario is still empty.</p>
+      <p>
+        Inspect the dataset with <code>scripts/explore_schema.py</code> and
+        <code>scripts/build_dataset.py</code>. The resulting local Parquet
+        files and <code>data/processed/schema_report.md</code> contain the
+        processed data and discovery findings. This page does not display
+        dataset results or live monitoring.
+      </p>
       <nav aria-label="Backend inspection">
         <a href="/health">Backend health</a>
         <a href="/openapi.json">API schema</a>

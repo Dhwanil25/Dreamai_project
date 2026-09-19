@@ -1,5 +1,6 @@
-"""Local scaffold serving a home page, health and explicit unavailable features.
+"""Phase 3 scaffold serving a home page, health and unavailable live features.
 
+Offline dataset ingestion is available through the local command-line scripts.
 Replay, detection and teaching remain unimplemented. Interactive API docs are
 disabled to avoid external CDN assets; /openapi.json exposes the contracts.
 """
@@ -16,7 +17,10 @@ from earshot.config import PROJECT_ROOT
 
 app = FastAPI(
     title="EARSHOT",
-    description="Working scaffold home and health. Business operations return 501 until implemented.",
+    description=(
+        "Phase 3: offline dataset ingestion is available through local scripts. "
+        "The scaffold serves home and health; live operations return 501 until implemented."
+    ),
     version="0.0.1",
     docs_url=None,
     redoc_url=None,
@@ -32,7 +36,7 @@ def _unavailable_details(feature: str) -> dict[str, Any]:
     return {
         "code": "not_implemented",
         "feature": feature,
-        "message": f"{feature} is not available in the Phase 2 scaffold; its API is planned for Phase 7.",
+        "message": f"{feature} is not available in the Phase 3 scaffold; its API is planned for Phase 7.",
         "available_in_phase": 7,
     }
 
@@ -100,13 +104,13 @@ async def rules() -> list[dict[str, Any]]:
 
 @app.get("/health")
 async def health() -> dict[str, Any]:
-    """Report server liveness and unavailable capabilities, without model claims."""
+    """Report liveness and implemented capabilities, not dataset/model readiness."""
     return {
         "ok": True,
         "status": "scaffold",
-        "phase": 2,
+        "phase": 3,
         "features": {
-            "ingestion": False,
+            "ingestion": True,
             "replay": False,
             "detection": False,
             "teaching": False,

@@ -6,9 +6,11 @@ EARSHOT is a local industrial monitoring project for a hackathon demo. Its plann
 
 ## Current status
 
-Phase 2 is complete: the virtual environment and pinned dependencies are installed, project-relative configuration works, and the package and FastAPI application import successfully. The backend serves the local scaffold page and a health response. Unfinished business endpoints return structured HTTP 501 responses; ingestion, anomaly detection, teaching, speech and replay are not implemented yet. Configuration and backend regression tests verify this boundary. The two policy/parser test files remain placeholders, not passing business tests.
+Phase 3 is complete: real dataset discovery and local ZIP-to-Parquet ingestion are implemented. January–March 2025 produced **68,891 alarm rows** and **50,327,215 numeric SCADA readings**. All 21 known turbines are present; two alarm records have an additional unmapped station ID, `91`, and are preserved. See [the Phase 3 report](docs/PHASE_3_REPORT.md) for coverage, source limitations and verification.
 
-Phase 1's reference inventory is available locally at `reference/REUSE_NOTES.md`; reference clones remain Git-ignored. The dataset placement gate is complete in the current workspace; Phase 3 ingestion has not started.
+The backend serves the local scaffold page and a health response. Unfinished business endpoints return structured HTTP 501 responses; anomaly detection, teaching, speech and replay remain unimplemented. Configuration, ingestion and backend regression tests verify this boundary. The two policy/parser test files remain placeholders, not passing business tests.
+
+Phase 1's reference inventory is available locally at `reference/REUSE_NOTES.md`; reference clones remain Git-ignored. Raw data, processed datasets and their detailed local reports are also Git-ignored.
 
 This repository is both the workspace and project root. Execution-plan paths under `~/earshot-hackathon/earshot/` resolve here, and the plan's workspace-level `reference/` directory and `preflight_report.md` also live here. Preserve the existing Git repository and origin when scaffolding later phases.
 
@@ -28,7 +30,7 @@ cp .env.example .env
 
 `requirements.txt` pins direct dependencies; `requirements.lock` records the resolved dependency versions from this environment and acts as installation constraints. Other Python versions/platforms have not been validated. Pytest searches only this project's `tests/`, excluding the reference repositories.
 
-The config loader finds `config.yaml` relative to its module, resolves data paths against the project root, and reads the root `.env` without replacing existing environment variables. Schema column names stay unset until Phase 3. The selected year is 2025, months January–March.
+The config loader finds `config.yaml` relative to its module, resolves data paths against the project root, and reads the root `.env` without replacing existing environment variables. Schema mappings now contain the column names discovered from the real files. The selected year is 2025, months January–March.
 
 `.env.example` uses `EARSHOT_OFFLINE=1`, preserving the local-only requirement rather than the original plan's online default. Keys are optional and unused by this scaffold. The example retains the plan's future provider settings; their availability has not been tested. Runtime offline enforcement and local speech still need implementation.
 
@@ -38,7 +40,7 @@ Start the scaffold process:
 ./venv/bin/uvicorn earshot.server:app --host 127.0.0.1 --port 8000
 ```
 
-Open `http://127.0.0.1:8000/` to see the scaffold page. `/health` returns HTTP 200 with `status: "scaffold"` and explicit unavailable feature flags; `ok: true` means the server is responding, not that the monitoring pipeline is ready. `/openapi.json` exposes the route contracts. Interactive API documentation is disabled so the scaffold does not load CDN assets.
+Open `http://127.0.0.1:8000/` to see the scaffold page. `/health` returns HTTP 200 with `status: "scaffold"`, `phase: 3` and `ingestion: true`; this flag describes the available local ingestion code, not a live feed or automatic dataset check. `ok: true` means the server is responding. `/openapi.json` exposes the route contracts. Interactive API documentation is disabled so the scaffold does not load CDN assets.
 
 `/stats`, `/rules`, `/teach`, `/undo/{rule_id}` and `/killswitch` return HTTP 501 with a structured `not_implemented` explanation until their implementation phase. `/stream` sends an explanatory error message and closes normally. These responses do not train a model, suppress alarms or change offline controls.
 
@@ -68,7 +70,7 @@ The demo should distinguish measured results, human labels, and any synthetic sc
 
 ## Dataset intake
 
-All eight supplied files are now copied into this workspace's `data/raw/`: the 2024, 2025 and 2026 year ZIPs, the optional ShutdownDuration ZIP, and the four companion CSVs. Copies were SHA-256 verified, original Downloads files were preserved, and archives remain compressed. The ignored `data/dataset_placement_manifest.json` records this local placement. No dataset has been ingested; `data/processed/` is still empty.
+All eight supplied files are copied into this workspace's `data/raw/`: the 2024, 2025 and 2026 year ZIPs, the optional ShutdownDuration ZIP, and the four companion CSVs. Copies were SHA-256 verified, original Downloads files were preserved, and archives remain compressed. The ignored `data/dataset_placement_manifest.json` records this local placement. Phase 3 processes only January–March of `2025.zip`; the remaining archives are retained for later selection.
 
 When setting up another checkout, place `2025.zip` in its `data/raw/` without unzipping it. The other supplied archives are optional for that configured year. Include these four companion files with their original names:
 
@@ -79,12 +81,42 @@ When setting up another checkout, place `2025.zip` in its `data/raw/` without un
 
 The archive and metadata remain local and Git-ignored. The original plan's `~/earshot-hackathon/earshot/data/raw/` path maps to this repository's `data/raw/`.
 
-Useful context includes timestamp format, sensor units, asset or site identifiers, operating modes, and the meaning of any event labels. Actual columns and coverage will be discovered during Phase 3.
+## Build and inspect the local dataset
+
+With the supplied files in place, run from the repository root. No API keys or internet connection are needed:
+
+```bash
+./venv/bin/python scripts/explore_schema.py
+./venv/bin/python scripts/build_dataset.py
+./venv/bin/pytest -q
+```
+
+Discovery prints exact headers, types, null counts, full sample rows and metadata. Building reads ZIP members in memory without extracting them, writes `data/processed/alarms.parquet` and `scada.parquet`, and appends coverage to `data/processed/schema_report.md`. Machine-readable counts are saved in `data/processed/ingestion_report.json`. Rerunning the build replaces its outputs and coverage section. Missing required inputs cause a clear error; no substitute data is generated.
+
+Inspect results without rebuilding:
+
+```bash
+./venv/bin/python - <<'PY'
+import pandas as pd
+from earshot.config import CONFIG
+for name in ('alarms', 'scada'):
+    frame = pd.read_parquet(CONFIG.data.processed_dir / f'{name}.parquet')
+    print(name, 'rows:', len(frame), 'columns:', list(frame.columns))
+    print(frame.head().to_string(index=False))
+    del frame
+PY
+cat data/processed/schema_report.md
+```
+
+Alarm columns are `ts`, `turbine_id`, `alarm_code`, `description`, `stopping`. SCADA columns are `ts`, `turbine_id`, `signal`, `value`; string-valued categories keep the larger table compact. Only temperature and turbine-grid tables are ingested. The categorical grid status field is explicitly excluded; all numeric fields and their nulls remain. Monthly endpoint overlaps are resolved by keeping timestamps inside each source month.
+
+Unknown codes keep `(undocumented)` descriptions and `stopping=-1`; missing alarm endings do not establish stopping status. Raw alarm duplicates are retained and reported. Timestamps have no source timezone declaration: the output's naive UTC interpretation is an explicit, unverified assumption. Station IDs retain their source values; turbine display names come from the metadata mapping. Documentation and stopping classifications do not identify false alarms.
 
 Before choosing a detector, inspect sampling intervals, missing values, repeated records, sensor ranges, operating cycles, and label coverage. Keep a later replay interval separate when evaluating whether a correction generalizes.
 
 ## Project documents
 
+- [Phase 3 ingestion validation](docs/PHASE_3_REPORT.md)
 - [Phase 2 scaffold validation](docs/PHASE_2_REPORT.md)
 - [Phase 0 preflight report](preflight_report.md)
 - [Original elevator pitch](docs/PITCH.md)
