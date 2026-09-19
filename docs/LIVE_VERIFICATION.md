@@ -7,36 +7,39 @@ Checked on September 19, 2026 against the supplied Hill of Towie files and the c
 | Check | Actual result | Evidence |
 | --- | --- | --- |
 | Nebius parsing | Successful provider response in 3.652 seconds; correct T04/code20 suppress proposal | `data/processed/nebius_live_parse.json` |
-| ElevenLabs transcription | HTTP 401, `missing_permissions`, missing `speech_to_text` | `data/processed/elevenlabs_live_stt.json` |
-| ElevenLabs synthesis | HTTP 401, `missing_permissions`, missing `text_to_speech` | `data/processed/elevenlabs_live_tts.json` |
+| ElevenLabs transcription | HTTP 200 after permission update; real human recording transcribed in 831.529 ms end to end | `data/processed/elevenlabs_live_stt.json` |
+| ElevenLabs synthesis | HTTP 200 after permission update; 79,038-byte MP3 generated in 780.125 ms end to end | `data/processed/elevenlabs_live_tts.json` |
 
 Nebius returned model `Qwen/Qwen3-30B-A3B-Instruct-2507`, request ID `3516f66876d5626ed670c551157be88b`, and completion ID `chatcmpl-bf697822-7e0e-4cff-89e0-3b811109b92d` through `https://api.tokenfactory.nebius.com/v1`. This first check exercised parsing only; it did not change the site's rules. Successful parser receipts leave HTTP status null when the SDK does not expose that status; no status is invented.
 
-The ElevenLabs key needs both permissions enabled before successful provider voice can be demonstrated. These failures are not a claim that the key is invalid. No transcript or successful audio output was substituted for the rejected calls. Transcription used an actual public human recording from the [official PyTorch speech-recognition tutorial](https://docs.pytorch.org/audio/stable/tutorials/speech_recognition_pipeline_tutorial.html), not synthesized operator input: `Lab41-SRI-VOiCES-src-sp0307-ch127535-sg0042.wav`, 108,844 bytes, SHA-256 `c65fcd726d6b08c82c1e5dc7558f863cd8d483e3ed2f4a7bcf271dc1865ada14`.
+The earlier HTTP 401 permission failures are resolved. Both operations succeeded through the website after the user enabled the required permissions. Earlier failed receipts are archived with their timestamps, without rewriting them as successes. Transcription used an actual public human recording from the [official PyTorch speech-recognition tutorial](https://docs.pytorch.org/audio/stable/tutorials/speech_recognition_pipeline_tutorial.html), not synthesized operator input: `Lab41-SRI-VOiCES-src-sp0307-ch127535-sg0042.wav`, 108,844 bytes, SHA-256 `c65fcd726d6b08c82c1e5dc7558f863cd8d483e3ed2f4a7bcf271dc1865ada14`.
 
 Provider keys are read only on the server from the ignored local `.env`. They are not embedded in the page, receipts, or committed files. Online mode sends utterance/vocabulary text to Nebius and microphone audio to ElevenLabs. Local-only mode blocks new provider calls; it does not disconnect the operating system from the network.
 
-Both speech paths were also called through the running website's actual `/listen` and `/speak` endpoints. Each returned an actionable application HTTP 503 with the provider's HTTP 401 `missing_permissions` receipt, and neither changed learning state. The receipt is `data/processed/website_voice_verification.json`; request identifiers remain null because these provider responses supplied none.
+The actual `/listen` endpoint returned **"I have that curiosity beside me at this moment."**, with a successful ElevenLabs `scribe_v2` receipt. Because this is not an industrial instruction, `parsed` was false and learning stayed unchanged. The actual `/speak` endpoint returned a 79,038-byte MP3 with provider request ID `AShN6GPZSPhe1VkahNjB`, using requested model `eleven_flash_v2_5`. macOS `afinfo` recognized it as 4.911 seconds of mono MP3 audio at 44.1 kHz. Its SHA-256 is `a52fd4baff1ad318424a55fa4587995e53db7a9d3513eab5471307fcf1499bb3`. The combined receipt is `data/processed/website_voice_verification.json`; the generated confirmation is `data/processed/live_website_confirmation.mp3`. No STT request ID or returned model name is invented when absent from the provider response.
+
+These tests prove the real speech adapters and permission update. They use a public human recording rather than the presentation microphone, and do not claim that an industrial command was spoken live. The user must still grant browser microphone access and try their own correction.
 
 ## Live application rehearsal
 
-`scripts/verify_live_proof.py` passed against the running HTTP/WebSocket application in **24.644 seconds**. Its complete local receipt is `data/processed/live_verification.json`.
+`scripts/verify_live_proof.py --voice` passed against the running HTTP/WebSocket application in **25.793 seconds**, including real Nebius and both ElevenLabs operations. Its complete local receipt is `data/processed/live_verification.json`; this successful attempt is also archived as `data/processed/live_verification_20260919T222208.727352Z_51f83710.json`.
 
 | Observation | Actual result |
 | --- | --- |
-| Online correction | Nebius request `c8ed0cf9c041ac44ac73729d794cde16`, 4,548.580 ms end to end |
+| Online correction | Nebius request `0c5744a7c7492edfa6dc444ddbd4a9ef`, 4,773.568 ms end to end |
 | Accepted scope | Turbine `2304513`, alarm code `20`, suppress |
 | Local learning | 276 actual alarm examples; nonzero classifier weights increased from 0 to 122 |
 | Buffered decisions | Four matching records became suppressed |
 | Future matching source event | `2025-02-21T20:27:36`, T04/code20, suppressed by the accepted rule |
 | Untaught source event | `2025-02-21T20:30:02`, T21/code3130, stopping=1, remained visible |
 | Offline correction | Local parser, no provider attempt; later T04/code25 recurrence suppressed |
+| Live speech | Real provider MP3 and human-recording transcription succeeded; unrelated transcript caused no learning |
 | Offline provider synthesis | Explicitly blocked with application HTTP 503 |
 | Undo | Both test rules revoked; original classifier hash restored exactly; no active rules left |
 
 The actual classifier fingerprint changed from `72e25a1ba031b6128acbe2ad6da448535eddbaa91bbeb9d7c23414998be2aca7` to `f0bc897f41d3be761619635899183dc60b1e74fbf085997d03c2170348cc14c9` after the first correction, and returned to the first value after undo. The receipt preserves both full learning states and the actual provider metadata. Model revisions remain monotonic after undo; revisions are not used as substitutes for weight comparisons.
 
-The script restores the prior online/paused settings and only undoes rule IDs it created. Recorded time advances during the test; it does not restore the earlier replay buffer. An initial verification attempt could not connect from its execution environment and applied no changes; its failure is preserved separately at `data/processed/live_verification_initial_connection_failure.json`. The successful run above connected from the root environment.
+The script restores the prior online/paused settings and only undoes rule IDs it created. Recorded time advances during the test; it does not restore the earlier replay buffer. An initial verification attempt could not connect from its execution environment and applied no changes; its failure is preserved separately at `data/processed/live_verification_initial_connection_failure.json`. The successful run above connected from the root environment. Each new attempt is archived independently, and a later failed attempt cannot replace an existing successful canonical receipt in sequential use; run the rehearsal one instance at a time.
 
 ## Source proof
 
@@ -89,4 +92,4 @@ EARSHOT_OFFLINE=1 LLM_API_KEY= ELEVENLABS_API_KEY= ./venv/bin/pytest -q
 ./venv/bin/python scripts/verify_browser.py
 ```
 
-Run the live rehearsal before browser verification if using both: the live rehearsal needs the original prewarmed timestamp. Add `--voice` only after correcting the ElevenLabs permissions to retest provider speech. Site rules and the complete operation history remain local and Git-ignored; the repository contains this measured summary and the reproducible verification code.
+Run the live rehearsal before browser verification if using both: the live rehearsal needs the original prewarmed timestamp. Add `--voice` to include live speech generation and transcription; the reference recording must transcribe successfully without producing a teaching rule. Every rehearsal attempt is archived, and a failed later attempt preserves an existing successful canonical receipt. Site rules and the complete operation history remain local and Git-ignored; the repository contains this measured summary and the reproducible verification code.

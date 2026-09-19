@@ -98,11 +98,11 @@ The ring holds 2,000 merged observations. Its trailing-hour count is buffer-limi
 | Component | Verified result |
 | --- | --- |
 | **Nebius** | A real parse succeeded in **3.652 seconds**, using `https://api.tokenfactory.nebius.com/v1` and `Qwen/Qwen3-30B-A3B-Instruct-2507`. Provider request ID: `3516f66876d5626ed670c551157be88b`. |
-| **ElevenLabs speech-to-text** | A real call returned **HTTP 401**, `missing_permissions`: the supplied key lacks `speech_to_text`. Live transcription is not working with that permission set. |
-| **ElevenLabs text-to-speech** | A real call returned **HTTP 401**, `missing_permissions`: the supplied key lacks `text_to_speech`. No successful provider audio output is claimed. |
+| **ElevenLabs speech-to-text** | The website’s `/listen` endpoint returned **HTTP 200** for a real human reference WAV in **831.529 ms** end-to-end. The transcript was “I have that curiosity beside me at this moment.” It returned `parsed: false`, correctly leaving learning unchanged because the speech was not an industrial instruction. |
+| **ElevenLabs text-to-speech** | The website’s `/speak` endpoint returned **HTTP 200** in **780.125 ms**, producing a **79,038-byte MP3**. Provider request ID: `AShN6GPZSPhe1VkahNjB`. |
 | **Local text teaching** | Available without provider credentials. Unsupported or ambiguous input returns no rule. |
 
-The recorded outcomes and their limits are in [live verification](docs/LIVE_VERIFICATION.md). Enable the two ElevenLabs permissions on the intended key, then revalidate before promising microphone-to-provider teaching or provider speech output.
+The earlier ElevenLabs HTTP 401 permission failures are historical; both permissions have now been corrected and both website endpoints have succeeded. The local receipt is `data/processed/website_voice_verification.json`; recorded provider outcomes are also exposed through `/evidence`. See [live verification](docs/LIVE_VERIFICATION.md) for their limits. This reference-audio check does not establish that an industrial command spoken into the user's microphone has completed teaching: browser microphone permission, device capture and that full interaction still need a human check.
 
 Hold the microphone button, or Space outside an input, and release to submit an actual clip. When online and correctly authorized, that audio is sent to ElevenLabs. Browser recognition is offered only when the browser verifies on-device support and an installed language pack. Otherwise use actual typed text; the app does not substitute a fixed transcript. On-device spoken readback requires an installed local synthesis voice and is explicitly computer-generated confirmation.
 

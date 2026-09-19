@@ -4,7 +4,7 @@ Start with `bash scripts/run_demo.sh`, then open <http://127.0.0.1:8000/> and [/
 
 This presentation uses recorded source data and instructions you enter during the demonstration. No prerecorded operator input or automatic fixed-transcript teaching is served. The example lines below are optional live instructions, not hidden UI actions. Inspect existing rules first; undo only your previous matching demonstration corrections if you want an unchanged starting hour.
 
-**Current voice limit:** Nebius parsing has succeeded live. Both ElevenLabs operations returned HTTP 401 because the supplied key lacks `speech_to_text` and `text_to_speech` permissions. Use typed text, or verified on-device browser recognition, until those permissions are corrected and a new real call succeeds. Do not describe a failed provider call as successful transcription or generated audio.
+**Current voice verification:** Nebius parsing and both ElevenLabs website endpoints have succeeded. A real human reference WAV sent to `/listen` returned HTTP 200 and its transcript; `/speak` returned HTTP 200 with fresh MP3 output. The earlier permission failures have been resolved. This does not verify an industrial command captured through your browser microphone: allow microphone access, check the selected device and rehearse that interaction before presenting. Typed input remains available.
 
 | Time | Presenter lines and actions |
 | --- | --- |
@@ -23,7 +23,7 @@ The selected hour contains **276 logged records in (19:25:06,20:25:06]**. Four m
 
 `/evidence` combines the source audit performed at this server startup, current classifier state and recent operation/provider records. Check its `verified_at` value; detected source-file changes invalidate the audit until a restart. The source audit compares all 68,891 alarm timestamp/station/code records and duplicate counts against the ZIP, checks description/stopping joins, and matches 185 sampled SCADA cells to the original tables. Its full 50,327,215 SCADA count comes from Parquet metadata; it does not claim to recheck every raw sensor cell. Use `./venv/bin/python scripts/audit_source_evidence.py` for an independent local rerun; restart the server after source changes.
 
-The successful Nebius call used `Qwen/Qwen3-30B-A3B-Instruct-2507` at `api.tokenfactory.nebius.com` and took 3.652 seconds. The two recorded ElevenLabs failures remain visible as failures. See [current live verification](../docs/LIVE_VERIFICATION.md) for exact provider outcomes.
+The successful Nebius call used `Qwen/Qwen3-30B-A3B-Instruct-2507` at `api.tokenfactory.nebius.com` and took 3.652 seconds. After the ElevenLabs permissions were corrected, `/listen` returned HTTP 200 in **831.529 ms** for a real human reference WAV, transcribing “I have that curiosity beside me at this moment.” That non-industrial sentence returned `parsed: false` and left learning unchanged. `/speak` returned HTTP 200 in **780.125 ms** with a **79,038-byte MP3**; its provider request ID was `AShN6GPZSPhe1VkahNjB`. The local receipt is `data/processed/website_voice_verification.json`. See [current live verification](../docs/LIVE_VERIFICATION.md) and `/evidence` for recorded provider outcomes; these endpoint checks do not substitute for a microphone-to-teaching rehearsal.
 
 ## RECOVERY LINES
 
@@ -39,4 +39,4 @@ The successful Nebius call used `Qwen/Qwen3-30B-A3B-Instruct-2507` at `api.token
 
 Source: [Hill of Towie wind farm open dataset, Zenodo 22662930](https://zenodo.org/records/22662930), RES on behalf of TRIG, CC-BY-4.0. Selected records cover January–March 2025. Alarm timestamps retain the existing unverified naive-UTC assumption.
 
-Before presenting, rehearse the actual text/microphone path, verify provider permissions and visible evidence, check projector readability, record a backup video of the real run and disable notifications.
+Before presenting, rehearse the actual text/microphone path, confirm browser microphone permission and device capture, inspect the visible evidence, check projector readability, record a backup video of the real run and disable notifications.

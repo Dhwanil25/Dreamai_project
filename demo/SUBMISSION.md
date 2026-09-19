@@ -27,9 +27,11 @@ The website serves **no prerecorded operator inputs or fixed-transcript shortcut
 - **FastAPI, Uvicorn, WebSockets:** one local runtime, current state and auditable operator actions.
 - **Vanilla HTML/CSS/JavaScript:** the self-contained operator console.
 - **Nebius Token Factory:** a real parse succeeded in **3.652 seconds** at `https://api.tokenfactory.nebius.com/v1`, using `Qwen/Qwen3-30B-A3B-Instruct-2507`. The provider request receipt is exposed in `/evidence` and documented in [LIVE_VERIFICATION.md](../docs/LIVE_VERIFICATION.md).
-- **ElevenLabs:** live speech-to-text and text-to-speech calls both returned **HTTP 401 `missing_permissions`** with the supplied key. The required permissions are `speech_to_text` and `text_to_speech`. These provider paths are implemented but are not currently demonstrated as working; user permission correction and revalidation remain necessary.
+- **ElevenLabs:** both website endpoints succeeded after the earlier permission failures were resolved. `/listen` returned **HTTP 200 in 831.529 ms** for a real human reference WAV, transcribing “I have that curiosity beside me at this moment.” This non-industrial sentence returned `parsed: false` and left learning unchanged. `/speak` returned **HTTP 200 in 780.125 ms** with a **79,038-byte MP3**, provider request `AShN6GPZSPhe1VkahNjB`. The local receipt is `data/processed/website_voice_verification.json`; `/evidence` exposes recorded provider outcomes.
 
 Local text teaching works without provider access. Verified on-device browser recognition is optional and depends on installed browser support. With online access enabled, audio may go to ElevenLabs and utterance/vocabulary text to Nebius. With the application offline switch engaged, new provider calls are blocked and local replay, parsing and learning continue. It does not switch off Wi-Fi or cancel requests already sent.
+
+The successful reference-audio and speech-output checks verify the website endpoints, not the user's microphone setup or a spoken industrial command through the complete teaching flow. Browser permission, device capture and that interaction still require a human rehearsal.
 
 ## Built in this project
 
@@ -50,4 +52,4 @@ Open <http://127.0.0.1:8000/> and inspect <http://127.0.0.1:8000/evidence>. The 
 
 The process environment takes precedence over `.env`. A fresh unconfigured checkout defaults offline; the current local configuration can enable providers with `EARSHOT_OFFLINE=0`. To force local-only execution, run `EARSHOT_OFFLINE=1 ./scripts/run_demo.sh`.
 
-The [90-second guide](DEMO_SCRIPT.md) uses instructions entered during the presentation, a real recurrence and an untouched stopping record. Provider permission fixes, microphone behavior and projector legibility must be checked before claiming a successful live voice demonstration.
+The [90-second guide](DEMO_SCRIPT.md) uses instructions entered during the presentation, a real recurrence and an untouched stopping record. Browser microphone permission, device capture, a spoken industrial instruction and projector legibility still need to be checked before claiming a successful live microphone teaching demonstration.

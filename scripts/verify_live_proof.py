@@ -19,6 +19,7 @@ import sys
 from tempfile import NamedTemporaryFile
 from time import perf_counter
 from urllib.parse import urlsplit
+from uuid import uuid4
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -57,7 +58,7 @@ def overlaps(rule: dict, event: dict) -> bool:
                for key in ("turbine_id", "alarm_code"))
 
 
-def publish(report: dict, destination: Path) -> None:
+def _atomic_json(report: dict, destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = None
     try:
@@ -72,6 +73,23 @@ def publish(report: dict, destination: Path) -> None:
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
+
+
+def publish(report: dict, destination: Path) -> Path:
+    """Archive every attempt; never replace a successful proof with a failure."""
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+    attempt = destination.with_name(f"live_verification_{stamp}_{uuid4().hex[:8]}.json")
+    _atomic_json(report, attempt)
+    existing = None
+    if destination.is_file():
+        try:
+            existing = json.loads(destination.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            pass
+    if isinstance(existing, dict) and existing.get("success") is True and not report["success"]:
+        return attempt
+    _atomic_json(report, destination)
+    return attempt
 
 
 async def verify(base_url: str, *, live_voice: bool = False) -> dict:
@@ -250,6 +268,12 @@ async def verify(base_url: str, *, live_voice: bool = False) -> dict:
                         learned.append(result["rule_id"])
                     require(transcription.is_success and result.get("transcription", {}).get("success") is True,
                             f"Optional live transcription did not succeed (HTTP {transcription.status_code})")
+                    require(result.get("parsed") is False,
+                            "The nonindustrial human reference unexpectedly produced a teaching rule")
+                    after_transcription = await call("GET", "/evidence")
+                    require(after_transcription["current_learning_state"] == observed["current_learning_state"],
+                            "The nonindustrial human reference unexpectedly changed learning state")
+                    report["checks"]["live_speech_and_noninstruction_no_learning"] = True
 
                 phase = "offline_teaching"
                 report["killswitch"] = await call("POST", "/killswitch", {"on": True})
@@ -331,11 +355,12 @@ def main() -> int:
         parser.error("--base-url must be a local HTTP origin with no credentials, path or query")
     report = asyncio.run(verify(base_url, live_voice=args.voice))
     output = CONFIG.data.processed_dir / "live_verification.json"
-    publish(report, output)
+    attempt = publish(report, output)
     print(json.dumps({"status": report["status"], "success": report["success"],
                       "elapsed_seconds": report["elapsed_seconds"], "checks": report["checks"],
                       "failure": report.get("failure"), "cleanup_errors": report["cleanup"]["errors"],
-                      "receipt": "data/processed/live_verification.json"}, indent=2))
+                      "receipt": str(attempt.relative_to(PROJECT_ROOT)),
+                      "canonical_proof": "data/processed/live_verification.json"}, indent=2))
     return 0 if report["success"] else 2
 
 
