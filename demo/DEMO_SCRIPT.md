@@ -1,6 +1,8 @@
 # EARSHOT — 90-second presentation
 
-Start with `bash scripts/run_demo.sh`, then open <http://127.0.0.1:8000/> and [/evidence](http://127.0.0.1:8000/evidence). The launcher warms a real recorded interval and pauses at **2025-02-21 20:25:06**. Presentation speed is **15×**; ordinary replay defaults to 600×. Keep replay paused until the proof beat.
+Start with `bash scripts/run_demo.sh`, then open [Live Console](http://127.0.0.1:8000/#console) and [Proof](http://127.0.0.1:8000/#proof). The launcher warms a real recorded interval and pauses at **2025-02-21 20:25:06**. Presentation speed is **15×**; ordinary replay defaults to 600×. Keep replay paused until the proof beat.
+
+For a longer walkthrough, start at [Overview](http://127.0.0.1:8000/#overview), demonstrate the console, then use **How It Learns → Market & Users → Architecture → Proof**. The learning tab separates scoped rules from classifier updates. In Market & Users, change annual price, project size or adoption to show how the dossier's wind scenario changes; label all three as assumptions. Select architecture components to explain their jobs and data boundaries, and finish with the live source audit and model state. Navigation itself does not apply corrections or start the microphone, and the existing console stays connected across tabs.
 
 This presentation uses recorded source data and instructions you enter during the demonstration. No prerecorded operator input or automatic fixed-transcript teaching is served. The example lines below are optional live instructions, not hidden UI actions. Inspect existing rules first; undo only your previous matching demonstration corrections if you want an unchanged starting hour.
 

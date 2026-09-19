@@ -79,7 +79,7 @@ def main() -> None:
             api("POST", "/replay", {"action": "pause"})
             page = context.new_page()
             track(page)
-            page.goto(origin + "/", wait_until="networkidle")
+            page.goto(origin + "/#console", wait_until="networkidle")
             expect(page.locator("#modelVersion")).not_to_have_text("v—")
             expect(page.locator("#replayToggle")).to_have_text("Resume")
             expect(page.locator("#offlineToggle")).to_have_attribute("aria-checked", "true")
@@ -214,7 +214,7 @@ def main() -> None:
                 stop(){this.onend();} abort(){this.onend();}
               };
             """)
-            voice_page.goto(origin + "/", wait_until="networkidle")
+            voice_page.goto(origin + "/#console", wait_until="networkidle")
             voice_page.locator("#soundEnabled").uncheck()
             expect(voice_page.locator("#voiceTier")).to_have_text("LOCAL MICROPHONE")
             voice_page.evaluate("document.activeElement?.blur()")
@@ -260,7 +260,7 @@ def main() -> None:
                 "evidence": {"kind": "browser_contract_mock", "provider": "elevenlabs", "operation": "speech_to_text",
                 "http_status": 401, "request_id": "browser-mock-permission-failure", "success": False,
                 "required_permission": "speech_to_text", "provider_request_occurred": False}}), times=1)
-            failure_page.goto(origin + "/", wait_until="networkidle")
+            failure_page.goto(origin + "/#console", wait_until="networkidle")
             failure_page.locator("#soundEnabled").uncheck()
             expect(failure_page.locator("#voiceTier")).to_have_text("MICROPHONE · PROVIDER")
             failure_page.evaluate("document.activeElement?.blur()")

@@ -11,7 +11,9 @@ With dependencies and the supplied dataset already processed:
 ./scripts/run_demo.sh
 ```
 
-Open **http://127.0.0.1:8000/**. The launcher prewarms a real recorded hour and pauses at **2025-02-21 20:25:06**. Enter your own instruction by text or an available live microphone path. For a reproducible example, type **“ignore generator cut-in on turbine four”**, inspect its rule and learning receipt, then resume to the next recorded occurrence. No correction is applied just by starting the app or navigating the recording.
+Open **http://127.0.0.1:8000/** for the demo overview, or **http://127.0.0.1:8000/#console** for the working console. The launcher prewarms a real recorded hour and pauses at **2025-02-21 20:25:06**. Enter your own instruction by text or an available live microphone path. For a reproducible example, type **“ignore generator cut-in on turbine four”**, inspect its rule and learning receipt, then resume to the next recorded occurrence. No correction is applied just by starting the app or navigating the recording.
+
+The website has six tabs: **Overview**, **Live Console**, **How It Learns**, **Market & Users**, **Architecture**, and **Proof**. The market tab uses the supplied EARSHOT dossier, links publisher estimates, and lets you change the wind-market assumptions. These scenarios are not measured customers or revenue. Architecture nodes explain the running components and optional cloud services; Proof retrieves current source/model/operation evidence from the backend. Switching tabs preserves console state and does not teach. Each tab has a shareable URL hash and supports arrow-key navigation. See [research sources and assumptions](docs/DEMO_RESEARCH.md).
 
 This is **recorded wind-farm data**, not a live connection to industrial equipment. The website serves no prerecorded operator input, fixed-transcript teaching shortcuts, or synthetic sensor/alarm rows. Spoken confirmations, when available, are labeled computer-generated output from the current instruction.
 
@@ -116,6 +118,8 @@ EARSHOT_OFFLINE=1 LLM_API_KEY= ELEVENLABS_API_KEY= ./venv/bin/pytest -q
 ./venv/bin/python scripts/audit_source_evidence.py
 curl -s http://127.0.0.1:8000/evidence
 ```
+
+With optional Playwright and Chrome installed, run `./venv/bin/python scripts/verify_demo_tabs.py` for read-only desktop/mobile navigation, market calculator and evidence checks. `./venv/bin/python scripts/verify_browser.py` additionally exercises real text teaching and Undo; its voice mocks test browser behavior and are explicitly not provider proof. Both write local reports and screenshots under `data/processed/`.
 
 `/health`, `/stats`, `/console`, `/rules`, `/evidence` and `/openapi.json` expose runtime state and contracts. `/stream` publishes events and state changes. `/teach`, `/listen`, `/undo/{rule_id}`, `/killswitch` and `/replay` accept operator actions; `/speak` requests fresh provider readback. Missing data and unavailable providers produce explicit errors rather than fabricated results.
 
