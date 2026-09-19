@@ -1,4 +1,4 @@
-"""Regression checks for an honest, usable Phase 3 server scaffold."""
+"""Regression checks for an honest, usable Phase 4 server scaffold."""
 
 import pytest
 from fastapi.testclient import TestClient
@@ -32,7 +32,10 @@ def test_root_serves_local_ui_independently_of_launch_directory(
         encoding="utf-8"
     )
     assert "EARSHOT" in response.text
-    assert "Phase 3 dataset ingestion" in response.text
+    assert "Phase 4 baseline metrics" in response.text
+    assert "scripts/compute_baseline.py" in response.text
+    assert "data/processed/baseline_report.md" in response.text
+    assert "demo/baseline_stats.json" in response.text
 
 
 def test_health_reports_ingestion_without_claiming_live_features_are_ready(client):
@@ -42,7 +45,7 @@ def test_health_reports_ingestion_without_claiming_live_features_are_ready(clien
     assert response.json() == {
         "ok": True,
         "status": "scaffold",
-        "phase": 3,
+        "phase": 4,
         "features": {
             "ingestion": True,
             "replay": False,
@@ -74,7 +77,7 @@ def test_unimplemented_features_return_structured_501(
     assert detail["available_in_phase"] == 7
     assert detail["feature"] == feature
     assert isinstance(detail["message"], str) and detail["message"].strip()
-    assert "Phase 3 scaffold" in detail["message"]
+    assert "Phase 4 scaffold" in detail["message"]
 
 
 def test_replay_socket_explains_unavailability_and_closes_cleanly(client):
@@ -86,7 +89,7 @@ def test_replay_socket_explains_unavailability_and_closes_cleanly(client):
         assert message["feature"] == "replay"
         assert message["available_in_phase"] == 7
         assert isinstance(message["message"], str) and message["message"].strip()
-        assert "Phase 3 scaffold" in message["message"]
+        assert "Phase 4 scaffold" in message["message"]
         with pytest.raises(WebSocketDisconnect) as closed:
             websocket.receive_json()
         assert closed.value.code == 1000

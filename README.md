@@ -6,9 +6,11 @@ EARSHOT is a local industrial monitoring project for a hackathon demo. Its plann
 
 ## Current status
 
-Phase 3 is complete: real dataset discovery and local ZIP-to-Parquet ingestion are implemented. January–March 2025 produced **68,891 alarm rows** and **50,327,215 numeric SCADA readings**. All 21 known turbines are present; two alarm records have an additional unmapped station ID, `91`, and are preserved. See [the Phase 3 report](docs/PHASE_3_REPORT.md) for coverage, source limitations and verification.
+Phase 4 adds a reproducible alarm baseline to the real-data ingestion pipeline. January–March 2025 contains **68,891 alarm rows**, averaging **31.933677 logged records/hour site-wide**. The top ten codes account for **92.022180%** of records. These are event-log measurements; the dataset does not establish false-alarm rates or operator workload. See [the Phase 4 report](docs/PHASE_4_REPORT.md) for methodology and verification.
 
-The backend serves the local scaffold page and a health response. Unfinished business endpoints return structured HTTP 501 responses; anomaly detection, teaching, speech and replay remain unimplemented. Configuration, ingestion and backend regression tests verify this boundary. The two policy/parser test files remain placeholders, not passing business tests.
+Phase 3 also produced **50,327,215 numeric SCADA readings**. All 21 known turbines are present; two alarms have the additional unmapped station ID `91` and remain in site-wide totals. The turbine-rate denominator uses the 21 metadata turbines and excludes those two records. See [the Phase 3 report](docs/PHASE_3_REPORT.md) for ingestion details.
+
+The backend serves the local scaffold page and a health response. Unfinished business endpoints return structured HTTP 501 responses; anomaly detection, teaching, speech and replay remain unimplemented. Configuration, ingestion, baseline and backend regression tests verify this boundary. The two policy/parser test files remain placeholders, not passing business tests.
 
 Phase 1's reference inventory is available locally at `reference/REUSE_NOTES.md`; reference clones remain Git-ignored. Raw data, processed datasets and their detailed local reports are also Git-ignored.
 
@@ -40,7 +42,7 @@ Start the scaffold process:
 ./venv/bin/uvicorn earshot.server:app --host 127.0.0.1 --port 8000
 ```
 
-Open `http://127.0.0.1:8000/` to see the scaffold page. `/health` returns HTTP 200 with `status: "scaffold"`, `phase: 3` and `ingestion: true`; this flag describes the available local ingestion code, not a live feed or automatic dataset check. `ok: true` means the server is responding. `/openapi.json` exposes the route contracts. Interactive API documentation is disabled so the scaffold does not load CDN assets.
+Open `http://127.0.0.1:8000/` to see the scaffold page. `/health` returns HTTP 200 with `status: "scaffold"`, `phase: 4` and `ingestion: true`; this flag describes the available local ingestion code, not a live feed or automatic dataset check. `ok: true` means the server is responding. `/openapi.json` exposes the route contracts. Interactive API documentation is disabled so the scaffold does not load CDN assets.
 
 `/stats`, `/rules`, `/teach`, `/undo/{rule_id}` and `/killswitch` return HTTP 501 with a structured `not_implemented` explanation until their implementation phase. `/stream` sends an explanatory error message and closes normally. These responses do not train a model, suppress alarms or change offline controls.
 
@@ -114,8 +116,28 @@ Unknown codes keep `(undocumented)` descriptions and `stopping=-1`; missing alar
 
 Before choosing a detector, inspect sampling intervals, missing values, repeated records, sensor ranges, operating cycles, and label coverage. Keep a later replay interval separate when evaluating whether a correction generalizes.
 
+## Compute and inspect the baseline
+
+After Phase 3 has produced the alarm Parquet, run:
+
+```bash
+./venv/bin/python scripts/compute_baseline.py
+cat data/processed/baseline_report.md
+./venv/bin/python -m json.tool demo/baseline_stats.json
+./venv/bin/pytest -q
+```
+
+The command prints the complete report and writes both artifacts. The versioned JSON includes source checksums, rates, Pareto, top codes, every discovered group and its pairwise support counts, every qualifying flood bin, consecutive runs, stopping classifications and duplicate sensitivity. Values retain computed precision in JSON; the report formats them for reading. Missing, invalid or suspicious inputs stop publication without inventing substitute records. Runs need no API keys or network access.
+
+Floods use fixed, clock-aligned, half-open ten-minute bins containing more than ten records; consecutive flagged bins are reported as runs. Co-occurrence requires another code on the same station within inclusive ±60 seconds, with at least 80% support in **both** directions. Maximal cliques keep every pair in a group above the threshold. All qualifying groups remain visible; a member with fewer than 20 observations flags limited evidence. Co-occurrence does not establish a common cause or permission to suppress an event.
+
+The **12/hour operator-console reference** is an approximate average workload benchmark, not a universal safety limit. The site log's ratio to that reference is descriptive because annunciation, routing and staffing are unknown. Per-turbine rates are asset diagnostics. [ISA background](https://www.isa.org/intech-home/2016/may-june/features/getting-the-most-from-your-safety-alarms)
+
+Only aggregate `demo/baseline_stats.json` is tracked for later UI use. Raw records and the detailed local report remain Git-ignored. The `/stats` API and dashboard integration are still scheduled for later phases.
+
 ## Project documents
 
+- [Phase 4 baseline validation](docs/PHASE_4_REPORT.md)
 - [Phase 3 ingestion validation](docs/PHASE_3_REPORT.md)
 - [Phase 2 scaffold validation](docs/PHASE_2_REPORT.md)
 - [Phase 0 preflight report](preflight_report.md)
