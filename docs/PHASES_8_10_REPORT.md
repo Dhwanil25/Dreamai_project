@@ -1,5 +1,7 @@
 # Phases 8–10 — console, voice and repeatable demo
 
+> Historical phase document. Current provider results, source verification and removal of prerecorded input/cache paths are documented in [LIVE_VERIFICATION.md](LIVE_VERIFICATION.md). Earlier measurements describe the earlier build.
+
 The remaining phases implement the operator console, optional voice adapters with local fallbacks, and a one-command presentation using genuine source events. The source execution-plan file remains untouched. The requested plan is recorded in [PHASES_8_10_PLAN.md](PHASES_8_10_PLAN.md).
 
 ## Measured rehearsal
@@ -43,7 +45,7 @@ The browser prefers configured online recording, then verified on-device recogni
 | 4 | always tell me about high wind on number four |
 | 5 | ignore generator cut-in on turbine seven |
 
-[The manifest](../demo/utterances/manifest.json) records transcripts, source scopes, hashes, durations, synthetic origin, and matching cached confirmations. A modified/missing fixture is rejected before teaching until its manifest is regenerated. Plain text and microphone transcripts use the same accepted-rule/learning pipeline.
+[The historical manifest](https://github.com/Dhwanil25/Dreamai_project/blob/0176050986d634d4719719c84ab5771e24a1d209/demo/utterances/manifest.json) records transcripts, source scopes, hashes, durations, synthetic origin, and matching cached confirmations. A modified/missing fixture is rejected before teaching until its manifest is regenerated. Plain text and microphone transcripts use the same accepted-rule/learning pipeline.
 
 ## Resilience fixes and limits
 

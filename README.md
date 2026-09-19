@@ -1,111 +1,130 @@
 # EARSHOT
 
-EARSHOT replays industrial sensor and alarm data on a site's own computer and learns scoped, reversible corrections from an operator's words. Its detector, teaching engine, saved knowledge, and console work locally; optional online speech and language services are disabled by default.
+EARSHOT replays real industrial sensor and alarm records on a site's own computer and learns scoped, reversible corrections from an operator's words. The console exposes the source records, actual local classifier state, and provider receipts so a displayed change can be checked against what the system did.
 
-## Run the demo
+## Run and inspect the evidence
 
-With the supplied dataset already processed in this checkout:
+With dependencies and the supplied dataset already processed:
 
 ```bash
+./venv/bin/python scripts/audit_source_evidence.py
 ./scripts/run_demo.sh
 ```
 
-Open **http://127.0.0.1:8000**. The launcher warms a real recorded hour and pauses at the presentation's starting point. Start with **“ignore generator cut-in on turbine four”**, watch the model revision and struck-out matching events, then resume playback to see a later recurrence. Undo is available beside every correction. The offline switch stays on by default; it does not turn off the computer's Wi-Fi.
+Open **http://127.0.0.1:8000/**. The launcher prewarms a real recorded hour and pauses at **2025-02-21 20:25:06**. Enter your own instruction by text or an available live microphone path. For a reproducible example, type **“ignore generator cut-in on turbine four”**, inspect its rule and learning receipt, then resume to the next recorded occurrence. No correction is applied just by starting the app or navigating the recording.
 
-Follow [the 90-second demo script](demo/DEMO_SCRIPT.md), [the chosen source timestamps](demo/scenario.json), and [the submission draft](demo/SUBMISSION.md). The console labels scripted recording shortcuts explicitly. They apply the recorded transcript through the real teaching engine; they are not live speech recognition.
+This is **recorded wind-farm data**, not a live connection to industrial equipment. The website serves no prerecorded operator input, fixed-transcript teaching shortcuts, or synthetic sensor/alarm rows. Spoken confirmations, when available, are labeled computer-generated output from the current instruction.
 
-Stop the launcher with **Ctrl+C**. It owns and stops only the server it started. Use one Uvicorn worker: one process owns the replay clock, model, and append-only correction journal. Port 8000 already in use produces a clear message; stop the previous EARSHOT terminal rather than starting another writer.
+Open **[/evidence](http://127.0.0.1:8000/evidence)** to inspect three distinct kinds of proof:
 
-## What the data actually shows
+- **Source audit:** raw ZIP, Parquet and metadata hashes; all **68,891** alarm timestamp/station/code records and duplicate counts compared with the original CSVs; description/stopping joins checked; five exact source-row traces; and **185 SCADA cells** compared with the original temperature/grid rows. The full **50,327,215** SCADA row count comes from Parquet metadata; the audit does not claim to compare every SCADA cell with the raw archive.
+- **Current local learning:** classifier type, actual weights/intercept SHA-256, nonzero weight count, training-example count, active rules and model revision. Teaching receipts record before/after state, the actual accepted scope, examples learned and visibility changes. A revision badge alone is not the proof of learning.
+- **Provider results:** actual parser source, request identifiers and recorded provider outcomes. A configured key is not evidence that an API call succeeded.
 
-The January–March 2025 selection contains **68,891 alarm records**, **50,327,215 numeric SCADA readings**, and **21 known turbines**. Logged alarms average **31.933677 per hour across the site**; the top ten codes account for **92.022180%** of records. The demonstration's selected trailing hour contains **276 logged alarms**, including four generator cut-in records for turbine four.
+The server audits the actual source files at startup and attaches `verified_at` to that result. Each evidence request checks source-file size, modification time and identity; a detected change invalidates the result and requires a restart to verify again. It does not promote an old `source_evidence.json` file to current proof. The standalone audit command writes a separate receipt for independent reruns. Live learning state comes from the running policy; provider validation records describe the calls that produced them. See [current live verification](docs/LIVE_VERIFICATION.md), [the presentation guide](demo/DEMO_SCRIPT.md), and [the submission](demo/SUBMISSION.md).
 
-Source: Alex Clerc and Elizabeth Lingkan, RES on behalf of TRIG, [Hill of Towie wind farm open dataset, Zenodo record 22662930](https://zenodo.org/records/22662930), version 2.1.0, [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/). EARSHOT selects three months, reshapes numeric measurements, joins supplied descriptions, and preserves source alarm records. These transformations are local; the raw archives are unchanged. The record confirms UTC/end-of-period timestamps for ten-minute SCADA; the alarm-log timezone is not independently established.
+Stop the launcher with **Ctrl+C**. It owns only its own server process. Use one Uvicorn worker: one process owns replay, learning and the correction journal. If port 8000 is occupied, stop the previous server you own before launching another writer.
 
-These figures measure event logs, not verified nuisance labels, incident accuracy, or operator staffing. Two records belong to unmapped station `91` and remain in site totals. Most observed alarm codes lack supplied descriptions and are displayed as undocumented. The chart's 12/hour line is an approximate operator-console workload reference, not a universal safety limit. See [baseline evidence](docs/PHASE_4_REPORT.md) and [machine-readable measurements](demo/baseline_stats.json).
+## Measured dataset
 
-## Setup from a fresh checkout
+January–March 2025 contains **68,891 alarm records**, **50,327,215 numeric SCADA readings**, and **21 known turbines**. Logged alarms average **31.933677/hour site-wide**; the top ten codes account for **92.022180%** of records. The selected presentation hour contains **276 logged alarms**, including four generator cut-in records on turbine four.
 
-Validated on macOS arm64 with Python 3.13.7. Run in the repository root:
+Source: Alex Clerc and Elizabeth Lingkan, RES on behalf of TRIG, [Hill of Towie wind farm open dataset, Zenodo record 22662930](https://zenodo.org/records/22662930), version 2.1.0, [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/). EARSHOT selects three months, reshapes numeric measurements and joins supplied descriptions. Raw archives remain unchanged. The release confirms UTC/end-of-period timestamps for ten-minute SCADA; the alarm-log timezone is not independently established.
+
+These are event-log measurements, not verified false-alarm labels or incident-detection accuracy. Two records belong to unmapped station `91` and remain in site totals. Undocumented codes stay visible as undocumented. The 12/hour chart line is an approximate operator-console workload reference, not a universal safety limit. See [baseline methodology](docs/PHASE_4_REPORT.md) and [calculated measurements](demo/baseline_stats.json).
+
+## Setup
+
+Validated on macOS arm64 with Python 3.13.7. From the repository root:
 
 ```bash
 python3 -m venv venv
 ./venv/bin/python -m pip install -r requirements.txt -c requirements.lock
-cp .env.example .env
+# For a new checkout only; preserve an existing local .env:
+test -f .env || cp .env.example .env
 mkdir -p data/raw data/processed
 ```
 
-Place the supplied ZIPs and metadata under `data/raw/` as documented in [dataset placement](docs/DATASET_PLACEMENT.md). The selected build needs `2025.zip`, `Hill_of_Towie_alarms_description.csv`, and `Hill_of_Towie_turbine_metadata.csv`; retain the field/table descriptions alongside them. Configuration selects January–March 2025.
+Place the supplied files under `data/raw/` as described in [dataset placement](docs/DATASET_PLACEMENT.md). The selected build uses `2025.zip` and the companion CSVs with their original names. Configuration selects January–March 2025.
 
 ```bash
 ./venv/bin/python scripts/explore_schema.py
 ./venv/bin/python scripts/build_dataset.py
 ./venv/bin/python scripts/compute_baseline.py
 ./venv/bin/python scripts/build_vocabulary.py
+./venv/bin/python scripts/audit_source_evidence.py
 ./scripts/run_demo.sh
 ```
 
-The launcher checks processed inputs and rebuilds missing datasets using these commands. **The sub-minute launch target assumes dependencies and processed data already exist**; initial installation and processing tens of millions of measurements take longer. Raw and processed data, secrets, site journals, logs, and reference checkouts remain Git-ignored. The WAV demonstration assets are checked in, so ordinary use does not require macOS speech tools.
+The launcher validates processed inputs and rebuilds missing Parquet from the supplied raw files. The under-60-second launch target assumes dependencies and preprocessing already exist. Initial ingestion is separate setup work. Raw/processed data, credentials, site journals and reference checkouts remain Git-ignored.
 
-For ordinary chronological replay from the beginning, without demo prewarming:
+Configuration honors an explicit process environment first, then the local `.env`. An unconfigured checkout and `.env.example` default to `EARSHOT_OFFLINE=1`; the current locally configured `EARSHOT_OFFLINE=0` enables provider attempts. To force local-only operation for a launch:
+
+```bash
+EARSHOT_OFFLINE=1 ./scripts/run_demo.sh
+```
+
+For ordinary chronological replay from the beginning, without presentation prewarming:
 
 ```bash
 ./venv/bin/uvicorn earshot.server:app --host 127.0.0.1 --port 8000
 ```
 
-## How teaching works
+## What changes when you teach
 
 ```text
-Local ZIPs + metadata -> Parquet -> chronological replay -> per-asset detector
-                                           |                     |
-                                           +----> local policy <-+
+Supplied ZIPs + metadata -> Parquet -> chronological replay -> local detectors
+           |                                  |
+           +-> source audit                   +-> observation buffer
                                                       |
-Operator text / verified local speech -----------------+
-        |                                             |
-        +-> validated scoped rule -> labeled buffer -> River classifier
-                                      |               |
-                               JSONL journal <--------+ -> revision + rescore
+Actual text / live transcript -> validated scope -> rule + River classifier
                                                       |
-                                               local console / undo
+                                   local journal -> rescore -> console + undo
+                                                      |
+                                    /evidence: state hashes and operation receipts
 
-Optional online mode: microphone -> ElevenLabs; text -> Nebius/Qwen-compatible API
-Offline switch: block those application provider calls; local teaching continues
+Online parsing: Nebius / Qwen        Optional cloud voice: ElevenLabs
+Offline mode: block provider calls; local parsing and learning continue
 ```
 
-A correction becomes a validated rule with an asset, alarm code, action, and audit identity. The policy labels matching buffered alarms and counter-examples, updates a local River logistic classifier, writes the exact training batch to disk, increments the revision, and rescores recent observations. Simple alarm-code corrections take effect through their explicit rule immediately. This is not retraining a large language model. Numeric sensor observations separately update the rolling anomaly detector.
+The policy labels matching buffered alarms and counter-examples, trains a local River logistic classifier, records the training batch, increments the revision and rescores recent observations. A simple `code_match` correction changes visibility through its explicit scoped rule immediately; the classifier also updates from those examples. **The LLM is not fine-tuned**, and immediate suppression is not presented as proof that the classifier independently inferred the policy.
 
-Undo revokes the rule and reconstructs the classifier from remaining training batches. A restart restores accepted rules and training; detector history and stream counters start fresh. Seek clears recent observations while retaining teaching. Explicit critical/emergency events and escalation rules stay visible; the dataset's `stopping` flag alone does not prove an incident is dangerous. The prototype advises on recorded data and does not operate equipment.
+Undo revokes the rule and reconstructs the classifier from remaining batches. Restart restores accepted corrections and training; detector histories and stream counters start fresh. Seek clears recent observations while retaining teaching. Numeric sensor snapshots separately update the anomaly detector. Explicit critical/emergency events and escalation rules stay visible; the source's stopping flag alone does not prove a dangerous incident. The prototype does not control equipment.
 
-The live ring holds 2,000 merged observations, including sensor snapshots. The displayed trailing-hour count is limited to that ring and is not extrapolated from a shorter interval. Suppressing the chosen four T04 events lowers the selected hour from 276 to 272; it does not make the whole site's alarm flood disappear.
+The ring holds 2,000 merged observations. Its trailing-hour count is buffer-limited and is not extrapolated from a shorter interval. With no prior relevant correction, teaching the selected T04 example changes four buffered records and lowers this hour from **276 to 272**, while other scopes remain visible.
 
-## Voice and offline behavior
+## Live provider status and voice
 
-- **Optional live provider:** set `ELEVENLABS_API_KEY` in `.env`, restart, and explicitly turn offline mode off. Hold the talk button (or Space outside text fields) and release to submit one clip. Audio goes to ElevenLabs; the resulting transcript uses the same local teaching endpoint logic. Live provider quality is unverified without credentials.
-- **On-device browser speech:** offered only if the browser supports `processLocally` and reports an installed language pack. EARSHOT never silently substitutes cloud browser recognition in offline mode. Permission and browser support vary. [Browser contract](https://developer.mozilla.org/en-US/docs/Web/API/SpeechRecognition/processLocally).
-- **Scripted fallback:** buttons/keys 1–5 play local synthetic recordings and apply their disclosed transcripts. Five spoken confirmations are cached as WAV files. These work without credentials or network and are visibly labeled.
-- **Text:** always available. Unsupported or ambiguous instructions do not change the model.
+| Component | Verified result |
+| --- | --- |
+| **Nebius** | A real parse succeeded in **3.652 seconds**, using `https://api.tokenfactory.nebius.com/v1` and `Qwen/Qwen3-30B-A3B-Instruct-2507`. Provider request ID: `3516f66876d5626ed670c551157be88b`. |
+| **ElevenLabs speech-to-text** | A real call returned **HTTP 401**, `missing_permissions`: the supplied key lacks `speech_to_text`. Live transcription is not working with that permission set. |
+| **ElevenLabs text-to-speech** | A real call returned **HTTP 401**, `missing_permissions`: the supplied key lacks `text_to_speech`. No successful provider audio output is claimed. |
+| **Local text teaching** | Available without provider credentials. Unsupported or ambiguous input returns no rule. |
 
-Online parsing optionally uses `LLM_BASE_URL`, `LLM_API_KEY`, and `LLM_MODEL`; `.env.example` includes a Nebius/Qwen example. Online mode can send text/vocabulary to that provider and voice/audio to ElevenLabs. Detector state, source events, and classifier weights stay local. The default `EARSHOT_OFFLINE=1` blocks application provider calls, including before retries. A switch cannot recall a request already sent; late provider results are rejected after switching offline. Cached confirmations are served locally first.
+The recorded outcomes and their limits are in [live verification](docs/LIVE_VERIFICATION.md). Enable the two ElevenLabs permissions on the intended key, then revalidate before promising microphone-to-provider teaching or provider speech output.
 
-Provider failures have bounded timeouts and clear fallbacks. Browser microphone permissions, local recognition availability, and room-volume checks require a person at the machine. This prototype's fully local live voice experience depends on verified browser speech support; the recordings demonstrate teaching mechanics without claiming that transcription occurred.
+Hold the microphone button, or Space outside an input, and release to submit an actual clip. When online and correctly authorized, that audio is sent to ElevenLabs. Browser recognition is offered only when the browser verifies on-device support and an installed language pack. Otherwise use actual typed text; the app does not substitute a fixed transcript. On-device spoken readback requires an installed local synthesis voice and is explicitly computer-generated confirmation.
 
-## Inspect and validate
+Online mode can send audio to ElevenLabs and utterance/vocabulary text to Nebius. Source event data, detector state and local classifier learning remain on this computer. The offline switch prevents new application provider calls, including retries, while local text teaching continues. It does not turn off Wi-Fi or recall requests already sent; late provider results are checked before use. Microphone permissions, installed language packs and room-volume performance still need a human check.
+
+## Validate
 
 ```bash
-./venv/bin/pytest -q
+EARSHOT_OFFLINE=1 LLM_API_KEY= ELEVENLABS_API_KEY= ./venv/bin/pytest -q
 ./venv/bin/python -m pip check
-curl -s http://127.0.0.1:8000/health
-curl -s http://127.0.0.1:8000/rules
+./venv/bin/python scripts/audit_source_evidence.py
+curl -s http://127.0.0.1:8000/evidence
 ```
 
-`/health`, `/stats`, `/console`, `/rules`, and `/openapi.json` expose local state and contracts. `/stream` publishes events, teaching, undo, link state, and statistics. `/teach`, `/listen`, `/undo/{rule_id}`, `/killswitch`, and `/replay` accept local actions. Replay controls pause/resume or seek to a source timestamp. Missing inputs leave the page and health endpoint available; unavailable operations return structured errors.
+`/health`, `/stats`, `/console`, `/rules`, `/evidence` and `/openapi.json` expose runtime state and contracts. `/stream` publishes events and state changes. `/teach`, `/listen`, `/undo/{rule_id}`, `/killswitch` and `/replay` accept operator actions; `/speak` requests fresh provider readback. Missing data and unavailable providers produce explicit errors rather than fabricated results.
 
-Meaningful tests cover real-data ingestion/reconciliation, scoped learning, undo/persistence, provider-free operation, concurrent clients, offline races, cached voice, and scripted teaching. For optional browser regression, install the development tool with `./venv/bin/python -m pip install playwright`, then run `./venv/bin/python scripts/verify_browser.py` against the prewarmed demo. It uses installed Chrome, temporarily teaches and undoes its own corrections, and saves screenshots locally. Playwright is not an application dependency. Final measured results and local evidence paths are in [the remaining-phases report](docs/PHASES_8_10_REPORT.md).
+Tests cover source reconciliation, local learning state, scoped rules, undo/persistence, offline behavior, provider outcomes, real-data replay and concurrent clients. The earlier phase reports are historical milestones; [LIVE_VERIFICATION.md](docs/LIVE_VERIFICATION.md) is the current account of provider validation and the removal of prerecorded-input paths.
 
 ## PRIOR ART VS BUILT TODAY
 
-The local [Phase 1 reference inventory](reference/REUSE_NOTES.md) reviewed `Dhwanil25/autonomous-ml-pipeline` at `ef26b071abd73979daff1bd7a7242afeded8c934` and `RAIN-Lab-AI/DOM_OS_Simulator` at `618295eaa460f3b21dd0e68cc464a92b65762b5a`. That inventory and both private clones are intentionally ignored by Git.
+The local [Phase 1 inventory](reference/REUSE_NOTES.md) reviewed `Dhwanil25/autonomous-ml-pipeline` at `ef26b071abd73979daff1bd7a7242afeded8c934` and `RAIN-Lab-AI/DOM_OS_Simulator` at `618295eaa460f3b21dd0e68cc464a92b65762b5a`. Both private clones and the inventory are intentionally Git-ignored.
 
-**Functions copied from either repository: none.** The inventory's COPY recommendations were candidates, not completed extraction. EARSHOT's cadence handling, replay timing, inline chart, and other implementation use fresh code; no reference module is imported or required at runtime. Concepts such as per-asset scoping, chronological observations, local model revisions, and an inspectable console informed the design.
+**Functions copied from either repository: none.** The COPY recommendations were candidates, not completed extraction. EARSHOT uses fresh implementation code; no reference module is imported at runtime. Per-asset scoping, chronological observations, local model revisions and inspectable decisions informed its design.
 
-Written in this project's implementation phases: the Hill of Towie adapter and measured baseline, bounded replay, rolling detectors, validated rules, local correction journal and River training, conservative parser, FastAPI/WebSocket server, operator console, optional voice adapters, local demonstration audio, and rehearsal/validation scripts. Third-party dependencies remain their respective upstream projects. See [the implementation plan](docs/PHASES_8_10_PLAN.md) and the individual phase reports under `docs/`.
+Built in this project: the dataset adapter and baseline, bounded replay, detectors, validated rules, correction journal and River training, local/provider parser, FastAPI/WebSocket server, operator console, live voice adapters, source audit and operation evidence. Third-party dependencies remain their respective upstream projects. Historical phase plans and reports under `docs/` record how the implementation developed.

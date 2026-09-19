@@ -64,9 +64,8 @@ async def main():
                 assert second['model_version'] == first['model_version'] + 1
                 evidence['offline_teach'] = second
                 audio = await client.get('/speak', params={'text':first['confirmation']})
-                audio.raise_for_status()
-                assert audio.content.startswith(b'RIFF')
-                evidence['offline_cached_audio_bytes'] = len(audio.content)
+                assert audio.status_code == 503, 'Offline speech must not invoke a cloud provider or use a canned recording'
+                evidence['offline_provider_audio_blocked'] = True
                 await call('POST', '/replay', {'action':'seek', 'ts':beats['unplug']['later_proof_seek_ts']})
                 later = await until(match(beats['unplug']['later_matching_event']), timeout=10)
                 assert not later['verdict']['show']
@@ -84,7 +83,7 @@ async def main():
         evidence['success'] = True
         output = CONFIG.data.processed_dir / 'phase10_rehearsal.json'
         output.write_text(json.dumps(evidence, indent=2)+'\n')
-        print(json.dumps({k:evidence[k] for k in ('success','elapsed_seconds','teach_ms','offline_cached_audio_bytes','remaining_rules')}, indent=2))
+        print(json.dumps({k:evidence[k] for k in ('success','elapsed_seconds','teach_ms','offline_provider_audio_blocked','remaining_rules')}, indent=2))
         print('Full evidence:', output)
 
 if __name__ == '__main__':

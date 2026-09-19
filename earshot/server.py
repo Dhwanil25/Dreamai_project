@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager, suppress
 from dataclasses import asdict, dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from hashlib import sha256
 import json
 import logging
@@ -26,7 +26,9 @@ from pydantic import BaseModel, ConfigDict, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from earshot.config import CONFIG, PROJECT_ROOT
+from earshot.audit import OperationAudit
 from earshot.detector import create_detector
+from earshot.evidence import build_source_evidence
 from earshot import parse, voice
 from earshot.policy import PolicyLayer
 from earshot.replay import Replayer
@@ -107,6 +109,9 @@ class Runtime:
     _events_processed: int = field(default=0, init=False)
     _started_at: float = field(default=0.0, init=False)
     _sequence: int = field(default=0, init=False)
+    audit: OperationAudit = field(init=False)
+    source_evidence: dict = field(default_factory=lambda: {"status": "not_verified"})
+    source_file_stamps: dict = field(default_factory=dict, repr=False)
 
     def __post_init__(self) -> None:
         if not math.isfinite(self.stats_interval) or self.stats_interval <= 0:
@@ -114,6 +119,16 @@ class Runtime:
         self.policy.bind_replay_buffer(self.replayer.buffer)
         self._generation = getattr(self.replayer, "generation", 0)
         self._sequence = len(self.policy.verdicts)
+        self.audit = OperationAudit(self.policy.rules_path.with_name("operations.jsonl"))
+
+    async def record_operation(self, operation: str, details: dict) -> dict:
+        try:
+            return await _work(self.audit.append, operation, _wire(details))
+        except Exception:
+            logger.exception("Operation evidence could not be persisted")
+            # Teaching itself is already durable in the policy journal. Do not
+            # invite a duplicate correction by disguising it as a failed teach.
+            return {"operation": operation, **details, "receipt_persisted": False}
 
     async def prepare_demo(self, settings: dict) -> None:
         """Warm on genuine chronological observations and pause for the presenter."""
@@ -274,7 +289,37 @@ def load_runtime() -> Runtime:
     baseline = _load_json(PROJECT_ROOT / "demo/baseline_stats.json")
     if "rates" not in baseline or "source" not in baseline:
         raise ValueError("Baseline artifact is missing its measured rates or source receipt")
-    return Runtime(Replayer(), PolicyLayer(create_detector(), CONFIG.replay.buffer_events), vocabulary, baseline)
+    runtime = Runtime(Replayer(), PolicyLayer(create_detector(), CONFIG.replay.buffer_events), vocabulary, baseline)
+    # Never promote an old receipt to current proof. Reconcile the actual files
+    # on startup and label the resulting snapshot with its observation time.
+    try:
+        source = build_source_evidence()
+        source["verified_at"] = datetime.now(timezone.utc).isoformat()
+        runtime.source_evidence = source
+        runtime.source_file_stamps = {
+            item["path"]: _file_stamp(PROJECT_ROOT / item["path"])
+            for item in source["files"].values()}
+    except Exception as error:
+        logger.exception("Source verification failed; recorded replay is not verified")
+        runtime.source_evidence = {"status": "verification_failed", "error_type": type(error).__name__}
+    return runtime
+
+
+def _file_stamp(path: Path) -> tuple | None:
+    try:
+        info = path.stat()
+        return info.st_size, info.st_mtime_ns, info.st_ino
+    except OSError:
+        return None
+
+
+def current_source_evidence(runtime: Runtime) -> dict:
+    changed = [name for name, stamp in runtime.source_file_stamps.items()
+               if _file_stamp(PROJECT_ROOT / name) != stamp]
+    if changed:
+        return {"status": "invalidated", "changed_files": changed,
+                "message": "Source files changed since startup; restart to verify them again."}
+    return runtime.source_evidence
 
 
 class TeachRequest(BaseModel):
@@ -417,32 +462,51 @@ def create_app(runtime_factory: Callable[[], Runtime] | None = None) -> FastAPI:
     async def teach(request: TeachRequest):
         return await apply_teaching(request.text)
 
-    async def apply_teaching(text: str):
+    async def apply_teaching(text: str, *, source: str = "text"):
+        try:
+            utterance_hash = sha256(text.encode("utf-8")).hexdigest()
+        except UnicodeEncodeError as error:
+            raise HTTPException(422, detail={"code": "invalid_text_encoding", "message": "Correction must contain valid Unicode text."}) from error
         runtime = require_runtime()
         if runtime.replay_error:
             raise HTTPException(status_code=503, detail={"code": "replay_failed", "message": "Replay is unavailable; inspect local server logs"})
-        rule = await asyncio.to_thread(parse.parse_utterance, text, runtime.vocabulary)
+        rule, parse_receipt = await asyncio.to_thread(parse.parse_utterance_with_evidence, text, runtime.vocabulary)
+        parse_attempts = [dict(parse_receipt)]
         # A switch during a provider call must not let its online result be
         # applied after the operator has requested local-only operation.
-        if rule is not None and rule.confidence > 0.6 and offline_enabled():
-            rule = await asyncio.to_thread(parse.parse_utterance, text, runtime.vocabulary)
+        if rule is not None and parse_receipt["source"] == "provider" and offline_enabled():
+            rule, parse_receipt = await asyncio.to_thread(parse.parse_utterance_with_evidence, text, runtime.vocabulary)
+            parse_attempts.append(dict(parse_receipt))
         if rule is None:
-            return {"parsed": False, "message": "no rule found in that"}
+            return {"parsed": False, "message": "no rule found in that", "parse": parse_receipt, "parse_attempts": parse_attempts, "source": source}
         async with runtime.lock:
             # Re-check after waiting for scoring/another teach: the operator
             # may have switched offline while this request waited for the lock.
-            if rule.confidence > 0.6 and offline_enabled():
-                rule = await _work(parse.parse_utterance, text, runtime.vocabulary)
+            if parse_receipt["source"] == "provider" and offline_enabled():
+                rule, parse_receipt = await _work(parse.parse_utterance_with_evidence, text, runtime.vocabulary)
+                parse_attempts.append(dict(parse_receipt))
                 if rule is None:
-                    return {"parsed": False, "message": "no rule found in that"}
-                if rule.confidence > 0.6 and offline_enabled():
+                    return {"parsed": False, "message": "no rule found in that", "parse": parse_receipt, "parse_attempts": parse_attempts, "source": source}
+                if parse_receipt["source"] == "provider" and offline_enabled():
                     raise HTTPException(status_code=503, detail={"code": "offline_parse_required", "message": "Retry teaching with the offline parser"})
             before = runtime.policy.model_version
+            state_before = await _work(runtime.policy.learning_state)
             confirmation = voice.confirmation(rule, runtime.vocabulary)
             learned = await _work(runtime.policy.learn, rule)
+            state_after = await _work(runtime.policy.learning_state)
+            evidence = await runtime.record_operation("teach", {
+                "source": source, "utterance_sha256": utterance_hash,
+                "rule_id": rule.rule_id, "scope": rule.scope, "action": rule.action,
+                "parse": parse_receipt, "parse_attempts": parse_attempts,
+                "learning_before": state_before, "learning_after": state_after,
+                "examples_learned": learned["examples_learned"],
+                "newly_suppressed_count": learned["newly_suppressed_count"],
+                "visibility_method": "explicit_scoped_rule; classifier also updates from buffered examples",
+                "offline": offline_enabled()})
             # learn already rescans the buffer atomically; do not fit/score twice.
             result = {"parsed": True, "rule": rule.model_dump(mode="json"),
                       "confirmation": confirmation,
+                      "source": source, "parse": parse_receipt, "parse_attempts": parse_attempts, "evidence": evidence,
                       "model_version_before": before, **learned}
             await runtime.broadcast({"type": "taught", **result})
         return result
@@ -451,12 +515,20 @@ def create_app(runtime_factory: Callable[[], Runtime] | None = None) -> FastAPI:
     async def voice_status():
         return {"online": not offline_enabled(), "provider_available": voice.provider_available(),
                 "live_voice_available": not offline_enabled() and voice.provider_available(),
-                "cached_confirmations": True, "scripted_fixtures": True}
+                "availability_meaning": "Configured key only; successful provider calls are recorded separately",
+                "cached_confirmations": False, "scripted_fixtures": False}
 
     @application.exception_handler(voice.VoiceError)
     async def voice_error(request: Request, error: voice.VoiceError):
         status = 422 if isinstance(error, voice.VoiceInputError) else 503
-        return JSONResponse(_error(type(error).__name__, str(error)), status_code=status)
+        result = _error(type(error).__name__, str(error))
+        receipt = getattr(error, "evidence", None)
+        if receipt:
+            result["evidence"] = receipt
+            runtime = application.state.runtime
+            if runtime is not None:
+                await runtime.record_operation(receipt.get("operation", "voice_failure"), receipt)
+        return JSONResponse(result, status_code=status)
 
     @application.post("/listen")
     async def listen(request: Request):
@@ -470,65 +542,59 @@ def create_app(runtime_factory: Callable[[], Runtime] | None = None) -> FastAPI:
                 audio.extend(chunk)
                 if len(audio) > voice.MAX_AUDIO_BYTES:
                     raise HTTPException(413, detail="Audio clip exceeds 8 MB")
-        transcript = await asyncio.to_thread(voice.transcribe, bytes(audio), mime)
+        transcript, transcription_receipt = await asyncio.to_thread(voice.transcribe_with_evidence, bytes(audio), mime)
+        await require_runtime().record_operation("speech_to_text", transcription_receipt)
         if offline_enabled():
             raise voice.OfflineError("Offline mode changed during transcription. Please teach again locally.")
-        result = await apply_teaching(transcript)
-        return {**result, "transcript": transcript, "source": "microphone"}
+        result = await apply_teaching(transcript, source="microphone")
+        return {**result, "transcript": transcript, "source": "microphone", "transcription": transcription_receipt}
 
     @application.get("/speak")
     async def speak(text: str = Query(min_length=1, max_length=1000)):
-        cached = await asyncio.to_thread(voice.cached_audio, text)
-        if cached is not None:
-            return Response(cached, media_type="audio/wav", headers={"X-EARSHOT-Audio": "local-cache"})
-        audio = await asyncio.to_thread(voice.speak, text)
-        return Response(audio, media_type="audio/mpeg", headers={"X-EARSHOT-Audio": "provider"})
+        audio, receipt = await asyncio.to_thread(voice.speak_with_evidence, text)
+        persisted = await require_runtime().record_operation("text_to_speech", receipt)
+        headers = {"X-EARSHOT-Audio": "elevenlabs", "X-EARSHOT-Receipt-ID": persisted.get("receipt_id", "unpersisted")}
+        return Response(audio, media_type="audio/mpeg", headers=headers)
 
-    def demo_manifest() -> dict:
-        return _load_json(PROJECT_ROOT / "demo/utterances/manifest.json")
-
-    @application.get("/demo/manifest")
-    async def manifest():
-        return demo_manifest()
-
-    @application.get("/demo/scenario")
-    async def scenario():
-        return _load_json(PROJECT_ROOT / "demo/scenario.json")
-
-    @application.get("/demo/audio/{filename}")
-    async def demo_audio(filename: str):
-        allowed = {fixture["audio"] for fixture in demo_manifest()["fixtures"]}
-        if filename not in allowed or Path(filename).name != filename:
-            raise HTTPException(404, detail="No demo recording has that name")
-        path = PROJECT_ROOT / "demo/utterances" / filename
-        if not path.is_file():
-            raise HTTPException(404, detail="Demo recording is missing")
-        return FileResponse(path, media_type="audio/wav")
-
-    @application.post("/demo/teach/{fixture_id}")
-    async def demo_teach(fixture_id: str):
-        fixture = next((item for item in demo_manifest()["fixtures"] if str(item["id"]) == fixture_id), None)
-        if fixture is None:
-            raise HTTPException(404, detail="No scripted fixture has that ID")
-        filename = fixture["audio"]
-        if Path(filename).name != filename:
-            raise HTTPException(503, detail="Demo manifest contains an invalid recording path")
-        path = PROJECT_ROOT / "demo/utterances" / filename
-        if (not path.is_file() or path.stat().st_size > voice.MAX_AUDIO_BYTES
-                or sha256(path.read_bytes()).hexdigest() != fixture.get("sha256")):
-            raise HTTPException(503, detail="Demo recording differs from its manifest; regenerate the local audio manifest")
-        result = await apply_teaching(fixture["transcript"])
-        return {**result, "transcript": fixture["transcript"], "source": "scripted_fixture"}
+    @application.get("/evidence")
+    async def evidence():
+        runtime = require_runtime()
+        source = await asyncio.to_thread(current_source_evidence, runtime)
+        providers = {}
+        for name, filename in (("nebius", "nebius_live_parse.json"),
+                               ("elevenlabs_stt", "elevenlabs_live_stt.json"),
+                               ("elevenlabs_tts", "elevenlabs_live_tts.json")):
+            path = CONFIG.data.processed_dir / filename
+            if path.is_file():
+                providers[name] = await asyncio.to_thread(_load_json, path)
+        async with runtime.lock:
+            current = await _work(runtime.policy.learning_state)
+            recent = await _work(runtime.audit.snapshot)
+            audit_integrity = await _work(runtime.audit.integrity_status)
+        return _wire({"data_kind": "recorded_dataset_replay", "source_verification": source,
+                      "current_learning_state": current, "recent_operations": recent,
+                      "operation_history_integrity": audit_integrity,
+                      "provider_validation": providers,
+                      "limits": ["Recorded wind-farm data, not a live plant connection.",
+                                 "Operator corrections are labels, not independently verified false alarms.",
+                                 "Simple code rules change visibility explicitly; local classifier weights also learn.",
+                                 "Provider key presence does not prove API permission or successful processing.",
+                                 "Speech synthesis produces computer-generated read-back, never replacement input.",
+                                 "No prerecorded demo input or fixed transcript is served by this website."]})
 
     @application.post("/undo/{rule_id}")
     async def undo(rule_id: str):
         runtime = require_runtime()
         async with runtime.lock:
             before = runtime.policy.model_version
+            state_before = await _work(runtime.policy.learning_state)
             undone = await _work(runtime.policy.undo, rule_id)
             if not undone:
                 raise HTTPException(status_code=404, detail={"code": "rule_not_reversible", "message": "No active reversible rule has that ID"})
-            result = {"undone": True, "rule_id": rule_id, "model_version_before": before, "model_version": runtime.policy.model_version}
+            receipt = await runtime.record_operation("undo", {"rule_id": rule_id,
+                "learning_before": state_before, "learning_after": await _work(runtime.policy.learning_state)})
+            result = {"undone": True, "rule_id": rule_id, "model_version_before": before,
+                      "model_version": runtime.policy.model_version, "evidence": receipt}
             await runtime.broadcast({"type": "undo", **result})
         return result
 

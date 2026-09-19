@@ -12,7 +12,6 @@ import sys
 import time
 from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
-import wave
 
 if __package__ in (None, ''):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -46,6 +45,9 @@ def _digest(path: Path) -> str:
 def validate(*, check_port: bool = True) -> dict:
     if check_port:
         with socket.socket() as listener:
+            # Match Uvicorn's reuse behavior so recently closed connections do
+            # not make an otherwise free port fail immediately after restart.
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
                 listener.bind(('127.0.0.1', 8000))
             except OSError as error:
@@ -98,23 +100,8 @@ def validate(*, check_port: bool = True) -> dict:
                        & alarms.turbine_id.eq(event['turbine_id']) & alarms.alarm_code.eq(event['alarm_code'])]
         if len(match) != 1 or int(match.iloc[0].stopping) != event['stopping']:
             raise ValueError('A configured demo proof event no longer matches the source.')
-    manifest_path = PROJECT_ROOT / 'demo' / 'utterances' / 'manifest.json'
-    if not manifest_path.is_file():
-        _run('prepare_demo_audio.py')
-    manifest = _json(manifest_path)
-    fixtures = manifest.get('fixtures', [])
-    if {row.get('id') for row in fixtures} != {'1', '2', '3', '4', '5'} or len(fixtures) != 5:
-        raise ValueError('The fixture manifest must contain exactly five unique IDs 1–5.')
-    for fixture in fixtures:
-        for field, checksum in (('audio', 'sha256'), ('confirmation_audio', 'confirmation_sha256')):
-            asset = (manifest_path.parent / fixture[field]).resolve()
-            if not asset.is_relative_to(manifest_path.parent.resolve()) or _digest(asset) != fixture[checksum]:
-                raise ValueError(f"Fixture {fixture['id']} audio checksum or path failed validation. Rebuild the manifest for intentional recording changes.")
-            with wave.open(str(asset), 'rb') as handle:
-                if handle.getnframes() <= 0:
-                    raise ValueError(f'Fixture audio is empty: {asset.name}')
     result = {'rows': counts, 'warm_alarm_records': len(window),
-              'warm_until': end.isoformat(), 'fixture_count': len(fixtures)}
+              'warm_until': end.isoformat(), 'source_kind': 'recorded_dataset_replay'}
     print('Demo preflight passed: ' + json.dumps(result), flush=True)
     return result
 
@@ -162,7 +149,7 @@ def main() -> int:
             wait_for_server(args.wait_pid, args.timeout)
         else:
             validate(check_port=not args.no_port_check)
-    except (OSError, ValueError, RuntimeError, KeyError, wave.Error) as error:
+    except (OSError, ValueError, RuntimeError, KeyError) as error:
         print(f'Demo cannot start: {error}', file=sys.stderr)
         return 2
     return 0

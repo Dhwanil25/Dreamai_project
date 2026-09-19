@@ -12,7 +12,8 @@ EARSHOT_LAUNCH_STARTED="$(python -c 'import time; print(time.time())')"
 export EARSHOT_LAUNCH_STARTED
 python scripts/demo_preflight.py
 export EARSHOT_DEMO=1
-export EARSHOT_OFFLINE="${EARSHOT_OFFLINE:-1}"
+# config.py loads .env; the server defaults to offline when unset. Explicit
+# shell variables still take precedence over .env through load_dotenv.
 EARSHOT_DEMO_PID=''
 cleanup() {
   trap - EXIT INT TERM

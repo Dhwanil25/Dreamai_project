@@ -1,5 +1,7 @@
 # EARSHOT implementation and demo plan
 
+> Historical phase document. Current provider results, source verification and removal of prerecorded input/cache paths are documented in [LIVE_VERIFICATION.md](LIVE_VERIFICATION.md). Earlier measurements describe the earlier build.
+
 ## The central demonstration
 
 An operator explains a nuisance event in ordinary language. EARSHOT turns that feedback into inspectable local state that changes its handling of a subsequent matching event. The knowledge survives an application restart and is usable with Wi-Fi off.

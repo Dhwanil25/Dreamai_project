@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections import deque
 from copy import deepcopy
 from dataclasses import dataclass
+from hashlib import sha256
 import json
 import math
 from numbers import Integral, Real
@@ -140,6 +141,19 @@ class PolicyLayer:
         """Return aligned scored copies, independent of the replay producer's ring."""
         with self._lock:
             return [(deepcopy(record.event), record.verdict) for record in self._records]
+
+    def learning_state(self) -> dict[str, Any]:
+        """Fingerprint the actual local classifier; expose no feature values."""
+        with self._lock:
+            state = {"weights": dict(self.classifier.weights), "intercept": self.classifier.intercept}
+            encoded = json.dumps(state, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+            return {"model_version": self._model_version,
+                    "classifier": "river.linear_model.LogisticRegression",
+                    "classifier_state_sha256": sha256(encoded).hexdigest(),
+                    "nonzero_weights": sum(value != 0 for value in self.classifier.weights.values()),
+                    "training_batches": len(self._batches),
+                    "training_examples": sum(len(batch) for batch in self._batches.values()),
+                    "active_rules": len(self._rules)}
 
     @staticmethod
     def _numeric_features(event: dict[str, Any]) -> dict[str, float]:

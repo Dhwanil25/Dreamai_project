@@ -1,5 +1,7 @@
 # Remaining implementation plan
 
+> Historical phase document. Current provider results, source verification and removal of prerecorded input/cache paths are documented in [LIVE_VERIFICATION.md](LIVE_VERIFICATION.md). Earlier measurements describe the earlier build.
+
 Requested on 2026-09-19: plan and execute the remaining phases. Phases 0–7 are already committed; this work covers Phases 8–10 in that order.
 
 1. **Console:** one self-contained vanilla HTML/CSS/JavaScript page, authoritative alarm snapshots and WebSocket updates, bounded feed, workload chart, model revision, rule ledger/undo, text teaching, and offline/replay controls. Verify real source data and browser interactions.

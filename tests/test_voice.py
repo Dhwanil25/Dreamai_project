@@ -188,7 +188,7 @@ def test_provider_voice_identifier_cannot_change_request_path(monkeypatch):
 @pytest.mark.parametrize("status", [302, 401, 429, 500])
 def test_http_errors_are_sanitized_without_retry_or_redirect(monkeypatch, wav_bytes, status):
     online(monkeypatch)
-    response = Response(b"provider secret or private transcript", status=status)
+    response = Response(b"provider secret or private transcript", "text/plain", status=status)
     calls = provider(monkeypatch, response)
 
     with pytest.raises(voice.VoiceProviderError) as error:
@@ -286,40 +286,6 @@ def test_switch_during_inflight_response_discards_result_and_closes(monkeypatch,
     assert len(calls) == 1 and response.closed
 
 
-def test_cached_wav_works_offline_without_key_or_provider(monkeypatch, tmp_path, wav_bytes):
-    monkeypatch.setattr(voice, "CACHE_DIR", tmp_path)
-    text = "Got it. Tell me if I’m wrong."
-    path = voice.cache_path(text)
-    assert path.name == sha256(text.encode()).hexdigest() + ".wav"
-    assert voice.cache_path("  " + text + "  ") == path
-    assert voice.cached_audio(text) is None
-    path.write_bytes(wav_bytes)
-
-    assert voice.cached_audio(text) == wav_bytes
-    assert voice.offline_enabled() and not voice.provider_available()
-    with pytest.raises(voice.OfflineError):
-        voice.speak(text)
-
-
-@pytest.mark.parametrize("damage", ["not-wav", "truncated", "size", "symlink"])
-def test_invalid_cached_audio_is_a_local_cache_miss(monkeypatch, tmp_path, wav_bytes, damage):
-    monkeypatch.setattr(voice, "CACHE_DIR", tmp_path / "cached")
-    path = voice.cache_path("Got it.")
-    path.parent.mkdir()
-    if damage == "not-wav":
-        path.write_bytes(b"not a WAV file")
-    elif damage == "truncated":
-        path.write_bytes(wav_bytes[:-100])
-    elif damage == "size":
-        path.write_bytes(wav_bytes)
-        monkeypatch.setattr(voice, "MAX_AUDIO_BYTES", len(wav_bytes) - 1)
-    else:
-        target = tmp_path / "outside-cache.wav"
-        target.write_bytes(wav_bytes)
-        path.symlink_to(target)
-    assert voice.cached_audio("Got it.") is None
-
-
 @pytest.mark.parametrize("text,action,target", [
     ("ignore cable untwist on turbine four", "Suppressing", "turbine 4"),
     ("when it is icing give me one line per turbine not six", "at most once per 60 seconds", "all turbines"),
@@ -344,3 +310,190 @@ def test_confirmation_does_not_claim_learning_for_no_rule_or_unknown_scope(vocab
     rule = rule.model_copy(update={"scope": {**rule.scope, "turbine_id": unknown}})
     with pytest.raises(voice.VoiceInputError):
         voice.confirmation(rule, vocabulary)
+
+
+@pytest.mark.parametrize("returned_model", [None, "actual-model-id"])
+def test_transcription_receipt_measures_returned_content_without_copying_it(monkeypatch, wav_bytes, returned_model):
+    online(monkeypatch)
+    monkeypatch.setenv("ELEVENLABS_STT_MODEL", "requested-model-id")
+    text = "ignore cable untwist on turbine four"
+    payload = {"text": "  " + text + "  "}
+    if returned_model:
+        payload["model_id"] = returned_model
+    response = Response(json.dumps(payload).encode())
+    response.headers["request-id"] = "stt-request-123"
+    calls = provider(monkeypatch, response)
+
+    result, receipt = voice.transcribe_with_evidence(wav_bytes)
+
+    assert result == text and len(calls) == 1 and response.closed
+    assert receipt["provider"] == "elevenlabs"
+    assert receipt["operation"] == "speech_to_text"
+    assert receipt["requested_model"] == "requested-model-id"
+    assert receipt["response_model"] == returned_model
+    assert receipt["http_status"] == 200 and receipt["request_id"] == "stt-request-123"
+    assert receipt["attempted"] is True and receipt["success"] is True
+    assert receipt["input_bytes"] == len(wav_bytes)
+    assert receipt["input_sha256"] == sha256(wav_bytes).hexdigest()
+    assert receipt["output_bytes"] == len(text.encode())
+    assert receipt["output_sha256"] == sha256(text.encode()).hexdigest()
+    assert 0 <= receipt["request_elapsed_ms"] <= receipt["elapsed_ms"] + 0.001
+    assert receipt["error_code"] is None and receipt["required_permission"] is None
+    serialized = json.dumps(receipt)
+    assert text not in serialized and "unit-test-key-never-send" not in serialized
+
+
+def test_speech_receipt_records_actual_bytes_and_does_not_infer_response_model(monkeypatch):
+    online(monkeypatch)
+    mp3 = b"ID3\x04\x00\x00\x00\x00\x00\x00"
+    response = Response(mp3, "audio/mpeg")
+    response.headers["x-request-id"] = "tts-request-456"
+    calls = provider(monkeypatch, response)
+
+    result, receipt = voice.speak_with_evidence("  Got it.  ")
+
+    assert result == mp3 and len(calls) == 1 and response.closed
+    assert receipt["operation"] == "text_to_speech"
+    assert receipt["requested_model"] == "eleven_flash_v2_5"
+    assert receipt["response_model"] is None
+    assert receipt["http_status"] == 200 and receipt["request_id"] == "tts-request-456"
+    assert receipt["success"] is True and receipt["attempted"] is True
+    assert receipt["input_bytes"] == len(b"Got it.")
+    assert receipt["input_sha256"] == sha256(b"Got it.").hexdigest()
+    assert receipt["output_bytes"] == len(mp3)
+    assert receipt["output_sha256"] == sha256(mp3).hexdigest()
+    assert "Got it." not in json.dumps(receipt)
+
+
+@pytest.mark.parametrize("operation", ["transcribe_with_evidence", "speak_with_evidence"])
+def test_offline_receipt_explicitly_reports_zero_provider_requests(wav_bytes, operation):
+    argument = wav_bytes if operation.startswith("transcribe") else "Got it."
+    with pytest.raises(voice.OfflineError) as error:
+        getattr(voice, operation)(argument)
+    receipt = error.value.evidence
+    assert receipt["attempted"] is False and receipt["success"] is False
+    assert receipt["http_status"] is None and receipt["request_id"] is None
+    assert receipt["request_elapsed_ms"] is None
+    assert receipt["output_bytes"] is None and receipt["output_sha256"] is None
+    assert receipt["elapsed_ms"] >= 0
+
+
+@pytest.mark.parametrize("permission,operation", [
+    ("speech_to_text", "transcribe_with_evidence"),
+    ("text_to_speech", "speak_with_evidence"),
+])
+def test_missing_permissions_are_actionable_without_exposing_provider_body(monkeypatch, wav_bytes, permission, operation):
+    online(monkeypatch)
+    body = {"detail": {"status": "missing_permissions", "message":
+        f"The API key you used is missing the permission {permission} to execute this operation. "
+        "unit-test-key-never-send private transcript"}}
+    response = Response(json.dumps(body).encode(), status=401)
+    response.headers["xi-request-id"] = "denied-123"
+    calls = provider(monkeypatch, response)
+    argument = wav_bytes if operation.startswith("transcribe") else "Got it."
+
+    with pytest.raises(voice.VoiceProviderError) as error:
+        getattr(voice, operation)(argument)
+
+    assert f"Enable the {permission} permission" in str(error.value)
+    assert "ElevenLabs API-key settings" in str(error.value)
+    receipt = error.value.evidence
+    assert receipt["error_code"] == "missing_permissions"
+    assert receipt["required_permission"] == permission
+    assert receipt["http_status"] == 401 and receipt["request_id"] == "denied-123"
+    assert receipt["attempted"] is True and receipt["success"] is False
+    assert receipt["output_bytes"] is None and receipt["output_sha256"] is None
+    assert len(calls) == 1 and response.closed and response.reads == 1
+    exposed = str(error.value) + json.dumps(receipt)
+    assert "unit-test-key-never-send" not in exposed and "private transcript" not in exposed
+
+
+@pytest.mark.parametrize("body", [
+    b"not JSON", b"[]",
+    b'{"detail":{"status":"private-error-secret","message":"speech_to_text private transcript"}}',
+    b'{"detail":{"status":"missing_permissions","message":"private transcript"}}',
+])
+def test_unknown_error_details_never_become_public_metadata(monkeypatch, wav_bytes, body):
+    online(monkeypatch)
+    response = Response(body, status=401)
+    provider(monkeypatch, response)
+    with pytest.raises(voice.VoiceProviderError) as error:
+        voice.transcribe_with_evidence(wav_bytes)
+    exposed = str(error.value) + json.dumps(error.value.evidence)
+    assert "private" not in exposed and "secret" not in exposed
+    assert error.value.evidence["required_permission"] is None
+    assert error.value.evidence["error_code"] in (None, "missing_permissions")
+    assert response.closed
+
+
+@pytest.mark.parametrize("declared,reads", [(True, 0), (False, 1)])
+def test_http_error_json_has_a_separate_small_read_bound(monkeypatch, wav_bytes, declared, reads):
+    online(monkeypatch)
+    oversized = b"x" * (voice.MAX_ERROR_JSON_BYTES + 1)
+    response = Response(oversized, status=401, length=len(oversized) if declared else None,
+                        chunks=[oversized, b"must not read this next chunk"])
+    provider(monkeypatch, response)
+    with pytest.raises(voice.VoiceProviderError) as error:
+        voice.transcribe_with_evidence(wav_bytes)
+    assert response.reads == reads and response.closed
+    assert error.value.evidence["error_code"] is None
+    assert error.value.evidence["http_status"] == 401
+
+
+@pytest.mark.parametrize("identifier", ["unit-test-key-never-send", "prefix-unit-test-key-never-send", "bad\nheader"])
+def test_reflected_secret_or_invalid_provider_identifiers_are_redacted(monkeypatch, wav_bytes, identifier):
+    online(monkeypatch)
+    response = Response(json.dumps({"text": "ignore cable untwist", "model_id": identifier}).encode())
+    response.headers["request-id"] = identifier
+    provider(monkeypatch, response)
+    _, receipt = voice.transcribe_with_evidence(wav_bytes)
+    assert receipt["request_id"] is None and receipt["response_model"] is None
+    assert "unit-test-key-never-send" not in json.dumps(receipt)
+
+
+def test_accidentally_misconfigured_model_does_not_copy_key_into_receipt(monkeypatch, wav_bytes):
+    online(monkeypatch)
+    monkeypatch.setenv("ELEVENLABS_STT_MODEL", "unit-test-key-never-send")
+    provider(monkeypatch, Response(b'{"text":"ignore cable untwist"}'))
+    _, receipt = voice.transcribe_with_evidence(wav_bytes)
+    assert receipt["requested_model"] is None
+    assert "unit-test-key-never-send" not in json.dumps(receipt)
+
+
+def test_transport_failure_receipt_records_attempt_without_inventing_http_status(monkeypatch, wav_bytes):
+    online(monkeypatch)
+    calls = provider(monkeypatch, requests.Timeout("private provider exception"))
+    with pytest.raises(voice.VoiceProviderError) as error:
+        voice.transcribe_with_evidence(wav_bytes)
+    receipt = error.value.evidence
+    assert len(calls) == 1 and receipt["attempted"] is True
+    assert receipt["http_status"] is None and receipt["request_id"] is None
+    assert receipt["success"] is False and receipt["output_sha256"] is None
+    assert receipt["request_elapsed_ms"] >= 0 and receipt["elapsed_ms"] >= 0
+    assert "private" not in str(error.value) + json.dumps(receipt)
+
+
+def test_invalid_success_payload_preserves_actual_status_but_does_not_claim_success(monkeypatch, wav_bytes):
+    online(monkeypatch)
+    provider(monkeypatch, Response(b'{"text":""}'))
+    with pytest.raises(voice.VoiceProviderError) as error:
+        voice.transcribe_with_evidence(wav_bytes)
+    assert error.value.evidence["http_status"] == 200
+    assert error.value.evidence["success"] is False
+    assert error.value.evidence["output_sha256"] is None
+
+
+def test_non_utf8_speech_text_is_a_typed_input_error_without_network(monkeypatch):
+    online(monkeypatch)
+    with pytest.raises(voice.VoiceInputError) as error:
+        voice.speak_with_evidence("\ud800")
+    assert error.value.evidence["attempted"] is False
+
+
+def test_non_utf8_transcript_is_a_typed_provider_error(monkeypatch, wav_bytes):
+    online(monkeypatch)
+    provider(monkeypatch, Response(b'{"text":"\\ud800"}'))
+    with pytest.raises(voice.VoiceProviderError) as error:
+        voice.transcribe_with_evidence(wav_bytes)
+    assert error.value.evidence["http_status"] == 200
+    assert error.value.evidence["success"] is False

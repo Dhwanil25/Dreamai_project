@@ -230,7 +230,7 @@ def _provider_rule(text, *, scope=None, action="suppress"):
     }
 
 
-def _mock_provider(monkeypatch, replies):
+def _mock_provider(monkeypatch, replies, *, metadata=None):
     pending = list(replies)
     calls = SimpleNamespace(constructors=[], requests=[], closes=0)
 
@@ -250,7 +250,7 @@ def _mock_provider(monkeypatch, replies):
             reply = pending.pop(0)
             if isinstance(reply, Exception):
                 raise reply
-            return SimpleNamespace(choices=[SimpleNamespace(
+            return SimpleNamespace(**(metadata or {}), choices=[SimpleNamespace(
                 finish_reason="stop",
                 message=SimpleNamespace(content=reply, refusal=None),
             )])
@@ -281,6 +281,7 @@ def test_online_valid_result_uses_bounded_sdk_options(monkeypatch, vocabulary):
     assert options["api_key"] == "parser-test-placeholder"
     request = calls.requests[0]
     assert request["temperature"] == 0 and request["model"] == "parser-test-model"
+    assert request["max_tokens"] == 512
     assert "2304513" in json.dumps(request["messages"])
     assert "10105" in json.dumps(request["messages"])
 
@@ -460,3 +461,167 @@ def test_offline_parse_teach_held_out_scope_and_undo_with_real_events(tmp_path, 
     assert policy.classifier.weights == weights_before
     assert policy.classifier.intercept == intercept_before
     assert policy.score(held_out.iloc[0].to_dict()).show
+
+
+def test_offline_receipt_identifies_actual_local_execution(vocabulary):
+    rule, evidence = parser.parse_utterance_with_evidence(FIXTURES[0]["text"], vocabulary)
+
+    _assert_expected(rule, FIXTURES[0]["expected"])
+    assert evidence["source"] == "local" and evidence["fallback_reason"] == "offline"
+    assert evidence["provider_attempted"] is False and evidence["attempts"] == 0
+    assert all(evidence[field] is None for field in ("provider", "endpoint_host", "model", "requested_model", "request_id", "completion_id"))
+
+
+@pytest.mark.parametrize("text,reason", [
+    (None, "invalid_input"),
+    ("what does cable untwist mean", "missing_intent"),
+    ("ignore cable untwist on turbine999", "ambiguous_reference"),
+    ("ignore cable untwist on turbine four at night", "unsupported_restriction"),
+])
+def test_unparsed_receipt_reports_guard_reason_without_provider(monkeypatch, vocabulary, text, reason):
+    _online_environment(monkeypatch)
+    rule, evidence = parser.parse_utterance_with_evidence(text, vocabulary)
+
+    assert rule is None and evidence["source"] == "none"
+    assert evidence["fallback_reason"] == reason
+    assert evidence["provider_attempted"] is False and evidence["attempts"] == 0
+
+
+def test_invalid_vocabulary_has_a_sanitized_receipt():
+    rule, evidence = parser.parse_utterance_with_evidence(FIXTURES[0]["text"], None)
+    assert rule is None and evidence["source"] == "none"
+    assert evidence["fallback_reason"] == "invalid_vocabulary"
+
+
+def test_missing_credentials_receipt_does_not_claim_provider_attempt(monkeypatch, vocabulary):
+    _online_environment(monkeypatch)
+    monkeypatch.delenv("LLM_API_KEY")
+    rule, evidence = parser.parse_utterance_with_evidence(FIXTURES[0]["text"], vocabulary)
+
+    _assert_expected(rule, FIXTURES[0]["expected"])
+    assert evidence["source"] == "local" and evidence["fallback_reason"] == "missing_credentials"
+    assert not evidence["provider_attempted"] and evidence["request_id"] is None
+
+
+def test_provider_receipt_uses_returned_model_and_ids_not_configured_guess(monkeypatch, vocabulary):
+    _online_environment(monkeypatch)
+    monkeypatch.setenv("LLM_BASE_URL", "https://api.tokenfactory.nebius.com/v1")
+    text = FIXTURES[0]["text"]
+    calls = _mock_provider(monkeypatch, [json.dumps(_provider_rule(text))], metadata={
+        "model": "Qwen/actual-model-revision", "_request_id": "request-123", "id": "chatcmpl-456",
+    })
+
+    rule, evidence = parser.parse_utterance_with_evidence(text, vocabulary)
+
+    assert rule is not None and evidence["source"] == "provider"
+    assert evidence["provider"] == "Nebius" and evidence["endpoint_host"] == "api.tokenfactory.nebius.com"
+    assert evidence["requested_model"] == "parser-test-model"
+    assert evidence["model"] == "Qwen/actual-model-revision"
+    assert evidence["request_id"] == "request-123" and evidence["completion_id"] == "chatcmpl-456"
+    assert evidence["provider_attempted"] is True and evidence["attempts"] == len(calls.requests) == 1
+    assert evidence["fallback_reason"] is None
+
+
+def test_provider_response_without_metadata_is_not_misrepresented(monkeypatch, vocabulary):
+    _online_environment(monkeypatch)
+    text = FIXTURES[0]["text"]
+    _mock_provider(monkeypatch, [json.dumps(_provider_rule(text))])
+
+    rule, evidence = parser.parse_utterance_with_evidence(text, vocabulary)
+
+    assert rule is not None and evidence["source"] == "provider"
+    assert evidence["model"] is None and evidence["request_id"] is None
+    assert evidence["requested_model"] == "parser-test-model"
+
+
+def test_invalid_provider_responses_are_local_fallback_with_attempt_receipts(monkeypatch, vocabulary):
+    _online_environment(monkeypatch)
+    calls = _mock_provider(monkeypatch, ["provider body must stay private", "still invalid"], metadata={
+        "model": "actual-model", "_request_id": "rejected-request", "id": "rejected-completion",
+    })
+
+    rule, evidence = parser.parse_utterance_with_evidence(FIXTURES[0]["text"], vocabulary)
+
+    _assert_expected(rule, FIXTURES[0]["expected"])
+    assert evidence["source"] == "local" and evidence["fallback_reason"] == "provider_invalid_response"
+    assert evidence["attempts"] == len(calls.requests) == 2
+    assert evidence["request_id"] == "rejected-request"
+    assert "provider body" not in json.dumps(evidence)
+
+
+@pytest.mark.parametrize("status,reason", [(401, "provider_auth_error"), (429, "provider_rate_limited"), (503, "provider_http_error")])
+def test_provider_http_failure_receipts_are_stable_and_sanitized(monkeypatch, vocabulary, status, reason):
+    _online_environment(monkeypatch)
+
+    class ProviderFailure(Exception):
+        status_code = status
+        request_id = "failed-provider-request"
+
+    calls = _mock_provider(monkeypatch, [ProviderFailure("parser-test-placeholder and private response body")])
+    rule, evidence = parser.parse_utterance_with_evidence(FIXTURES[0]["text"], vocabulary)
+
+    _assert_expected(rule, FIXTURES[0]["expected"])
+    assert evidence["source"] == "local" and evidence["fallback_reason"] == reason
+    assert evidence["http_status"] == status and evidence["request_id"] == "failed-provider-request"
+    assert evidence["attempts"] == len(calls.requests) == 1
+    serialized = json.dumps(evidence)
+    assert "parser-test-placeholder" not in serialized and "private response" not in serialized
+
+
+def test_transport_timeout_receipt_preserves_local_fallback(monkeypatch, vocabulary):
+    _online_environment(monkeypatch)
+    _mock_provider(monkeypatch, [TimeoutError("provider secret")])
+    rule, evidence = parser.parse_utterance_with_evidence(FIXTURES[0]["text"], vocabulary)
+    _assert_expected(rule, FIXTURES[0]["expected"])
+    assert evidence["source"] == "local" and evidence["fallback_reason"] == "provider_timeout"
+    assert "provider secret" not in json.dumps(evidence)
+
+
+def test_receipts_strip_url_secrets_and_reflected_invalid_identifiers(monkeypatch, vocabulary):
+    _online_environment(monkeypatch)
+    monkeypatch.setenv("LLM_BASE_URL", "https://person:embedded-secret@api.tokenfactory.nebius.com/private/path?key=query-secret#fragment")
+    text = FIXTURES[0]["text"]
+    _mock_provider(monkeypatch, [json.dumps(_provider_rule(text))], metadata={
+        "model": "parser-test-placeholder", "_request_id": "parser-test-placeholder", "id": "bad\nidentifier",
+    })
+
+    rule, evidence = parser.parse_utterance_with_evidence(text, vocabulary)
+
+    assert rule is not None and evidence["endpoint_host"] == "api.tokenfactory.nebius.com"
+    assert evidence["model"] is None and evidence["request_id"] is None and evidence["completion_id"] is None
+    serialized = json.dumps(evidence)
+    assert all(fragment not in serialized for fragment in ("embedded-secret", "query-secret", "private/path", "parser-test-placeholder"))
+
+
+def test_provider_and_offline_receipts_do_not_share_mutable_state(monkeypatch, vocabulary):
+    _online_environment(monkeypatch)
+    text = FIXTURES[0]["text"]
+    _mock_provider(monkeypatch, [json.dumps(_provider_rule(text))], metadata={"_request_id": "first-request", "model": "actual-model"})
+    _, first = parser.parse_utterance_with_evidence(text, vocabulary)
+    first_snapshot = deepcopy(first)
+    monkeypatch.setenv("EARSHOT_OFFLINE", "1")
+
+    _, second = parser.parse_utterance_with_evidence(text, vocabulary)
+
+    assert first == first_snapshot and first is not second
+    assert first["source"] == "provider" and first["request_id"] == "first-request"
+    assert second["source"] == "local" and second["request_id"] is None and second["attempts"] == 0
+
+
+def test_switch_after_provider_response_records_discard_and_local_execution(monkeypatch, vocabulary):
+    _online_environment(monkeypatch)
+    text = FIXTURES[0]["text"]
+    original_accept = parser._accept_online
+
+    def switch_after_validation(*args, **kwargs):
+        rule = original_accept(*args, **kwargs)
+        monkeypatch.setattr(parser, "OFFLINE_MODE", True)
+        return rule
+
+    monkeypatch.setattr(parser, "_accept_online", switch_after_validation)
+    _mock_provider(monkeypatch, [json.dumps(_provider_rule(text))], metadata={"_request_id": "discarded-request"})
+    rule, evidence = parser.parse_utterance_with_evidence(text, vocabulary)
+
+    _assert_expected(rule, FIXTURES[0]["expected"])
+    assert evidence["source"] == "local" and evidence["fallback_reason"] == "offline_changed"
+    assert evidence["provider_attempted"] is True and evidence["request_id"] == "discarded-request"

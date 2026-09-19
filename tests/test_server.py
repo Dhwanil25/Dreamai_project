@@ -9,6 +9,7 @@ import asyncio
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
+from hashlib import sha256
 import json
 import os
 import socket
@@ -68,7 +69,7 @@ def offline_and_no_network(monkeypatch):
     monkeypatch.setattr(server, "OFFLINE_MODE", False)
     monkeypatch.setattr(parser, "OFFLINE_MODE", False)
     monkeypatch.setattr(voice, "OFFLINE_MODE", False, raising=False)
-    for name in ("LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL"):
+    for name in ("LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL", "ELEVENLABS_API_KEY"):
         monkeypatch.delenv(name, raising=False)
     attempts = []
 
@@ -79,6 +80,7 @@ def offline_and_no_network(monkeypatch):
     monkeypatch.setattr(socket, "create_connection", deny)
     monkeypatch.setattr(socket.socket, "connect", deny)
     monkeypatch.setattr(parser, "OpenAI", deny)
+    monkeypatch.setattr(voice.requests, "post", deny)
     yield
     assert not attempts, "A caught outbound failure still counts as a network attempt"
 
@@ -241,7 +243,7 @@ def test_stats_publication_completes_before_a_new_teaching_revision(live, monkey
     parsed = threading.Event()
     release = asyncio.Event()
     original_broadcast = live.runtime.broadcast
-    original_parse = parser.parse_utterance
+    original_parse = parser.parse_utterance_with_evidence
     first_stats = True
     publication = []
 
@@ -256,12 +258,12 @@ def test_stats_publication_completes_before_a_new_teaching_revision(live, monkey
             publication.append((payload["type"], payload["model_version"]))
 
     def observed_parse(text, context):
-        rule = original_parse(text, context)
+        result = original_parse(text, context)
         parsed.set()
-        return rule
+        return result
 
     monkeypatch.setattr(live.runtime, "broadcast", gated_broadcast)
-    monkeypatch.setattr(parser, "parse_utterance", observed_parse)
+    monkeypatch.setattr(parser, "parse_utterance_with_evidence", observed_parse)
     with live.client.websocket_connect("/stream") as websocket, ThreadPoolExecutor(max_workers=1) as executor:
         try:
             assert entered.wait(5), "No periodic stats publication reached the gate"
@@ -321,7 +323,9 @@ def test_unparseable_teaching_returns_200_without_mutation(live):
     response = live.client.post("/teach", json={"text": "what is the weather like"})
 
     assert response.status_code == 200
-    assert response.json() == {"parsed": False, "message": "no rule found in that"}
+    result = response.json()
+    assert result["parsed"] is False and result["message"] == "no rule found in that"
+    assert result["parse"]["source"] == "none" and result["source"] == "text"
     assert live.runtime.policy.stats() == before
     assert not live.runtime.policy.rules_path.exists()
 
@@ -477,7 +481,7 @@ def test_openapi_contract_available_without_cdn_documentation(live):
 def test_killswitch_reparses_online_proposal_after_waiting_for_policy_lock(live, monkeypatch):
     """Force the switch after initial parsing but before policy-lock entry."""
     assert live.client.post("/killswitch", json={"on": False}).status_code == 200
-    original_parse = parser.parse_utterance
+    original_parse = parser.parse_utterance_with_evidence
     original_lock = live.runtime.lock
     parsed = threading.Event()
     waiting_for_policy = threading.Event()
@@ -486,15 +490,18 @@ def test_killswitch_reparses_online_proposal_after_waiting_for_policy_lock(live,
 
     def controlled_parse(text, context):
         offline = server.offline_enabled()
-        rule = original_parse(text, context)
+        rule, evidence = original_parse(text, context)
         assert rule is not None
         calls.append(offline)
         if not offline:
             # Provider confidence is a test control on a real-vocabulary rule.
             rule = rule.model_copy(update={"confidence": 0.9})
+            evidence = {**evidence, "source": "provider", "provider": "unit-test-mock",
+                        "provider_attempted": True, "attempts": 1,
+                        "request_id": "unit-test-online-proposal", "fallback_reason": None}
             online_ids.append(rule.rule_id)
         parsed.set()
-        return rule
+        return rule, evidence
 
     class ObservedLock:
         async def __aenter__(self):
@@ -507,7 +514,7 @@ def test_killswitch_reparses_online_proposal_after_waiting_for_policy_lock(live,
         async def __aexit__(self, *args):
             original_lock.release()
 
-    monkeypatch.setattr(parser, "parse_utterance", controlled_parse)
+    monkeypatch.setattr(parser, "parse_utterance_with_evidence", controlled_parse)
     monkeypatch.setattr(live.runtime, "lock", ObservedLock())
     live.client.portal.call(original_lock.acquire)
     released = False
@@ -529,6 +536,11 @@ def test_killswitch_reparses_online_proposal_after_waiting_for_policy_lock(live,
     result = response.json()
     assert calls == [False, True]
     assert result["rule"]["confidence"] == 0.6
+    assert result["parse"]["source"] == "local"
+    assert [attempt["source"] for attempt in result["parse_attempts"]] == ["provider", "local"]
+    assert result["parse_attempts"][0]["provider_attempted"] is True
+    assert result["parse_attempts"][0]["request_id"] == "unit-test-online-proposal"
+    assert result["evidence"]["parse_attempts"] == result["parse_attempts"]
     assert result["rule_id"] not in online_ids
     assert result["model_version_before"] == 1 and result["model_version"] == 2
     assert [rule.rule_id for rule in live.runtime.policy.active_rules] == [result["rule_id"]]
@@ -612,7 +624,7 @@ def test_console_snapshot_cannot_mutate_scored_event(live):
 
 def test_voice_offline_rejects_upload_without_provider(live, monkeypatch):
     called = []
-    monkeypatch.setattr(voice, 'transcribe', lambda *args: called.append(args))
+    monkeypatch.setattr(voice, 'transcribe_with_evidence', lambda *args: called.append(args))
     response = live.client.post('/listen', content=b'pretend microphone bytes', headers={'Content-Type': 'audio/wav'})
     assert_error(response, 503)
     assert not called
@@ -622,54 +634,76 @@ def test_voice_offline_rejects_upload_without_provider(live, monkeypatch):
 def test_microphone_uses_common_teaching_pipeline(live, monkeypatch):
     server.set_offline(False)
     received = []
+    transcription_receipt = {"provider": "unit-test-mock", "operation": "speech_to_text",
+                             "attempted": True, "success": True, "request_id": "unit-test-stt",
+                             "mocked": True}
     def transcription(data, mime):
         received.append((data, mime))
-        return TEACH_TEXT
-    monkeypatch.setattr(voice, 'transcribe', transcription)
+        return TEACH_TEXT, transcription_receipt
+    monkeypatch.setattr(voice, 'transcribe_with_evidence', transcription)
     result = live.client.post('/listen', content=b'recorded', headers={'Content-Type': 'audio/webm;codecs=opus'}).json()
     assert received == [(b'recorded', 'audio/webm')]
     assert result['parsed'] and result['source'] == 'microphone'
     assert result['transcript'] == TEACH_TEXT
+    assert result['transcription'] == transcription_receipt
+    assert result['parse']['source'] == 'local'
     assert result['rule_id'] in result['confirmation'] or 'turbine' in result['confirmation'].lower()
     assert len(live.client.get('/rules').json()) == 1
+    receipts = live.runtime.audit.snapshot()
+    assert [receipt['operation'] for receipt in receipts] == ['speech_to_text', 'teach']
+    assert receipts[0]['request_id'] == 'unit-test-stt'
+    assert receipts[1]['source'] == 'microphone'
 
 
 def test_microphone_result_discarded_if_switched_offline(live, monkeypatch):
     server.set_offline(False)
     def transcription(*args):
         server.set_offline(True)
-        return TEACH_TEXT
-    monkeypatch.setattr(voice, 'transcribe', transcription)
+        return TEACH_TEXT, {"provider": "unit-test-mock", "operation": "speech_to_text", "mocked": True}
+    monkeypatch.setattr(voice, 'transcribe_with_evidence', transcription)
     response = live.client.post('/listen', content=b'recorded', headers={'Content-Type': 'audio/wav'})
     assert_error(response, 503)
     assert live.client.get('/rules').json() == []
 
 
-def test_cached_confirmation_is_served_offline(live, monkeypatch):
-    monkeypatch.setattr(voice, 'cached_audio', lambda text: b'RIFFcached')
-    def no_provider(*args):
-        pytest.fail('A cached confirmation must not contact a provider')
-    monkeypatch.setattr(voice, 'speak', no_provider)
+def test_speech_uses_dynamic_provider_audio_and_persists_its_receipt(live, monkeypatch):
+    server.set_offline(False)
+    called = []
+    mp3 = b'ID3unit-test-provider-audio'
+    details = {"provider": "unit-test-mock", "operation": "text_to_speech", "attempted": True,
+               "success": True, "request_id": "unit-test-tts", "mocked": True,
+               "output_sha256": sha256(mp3).hexdigest()}
+
+    def forbidden_cache(*args):
+        pytest.fail('The website must not substitute a cached recording for dynamic speech')
+
+    def synthesis(text):
+        called.append(text)
+        return mp3, details
+
+    monkeypatch.setattr(voice, 'cached_audio', forbidden_cache, raising=False)
+    monkeypatch.setattr(voice, 'speak_with_evidence', synthesis)
     response = live.client.get('/speak', params={'text': 'Got it.'})
     assert response.status_code == 200
-    assert response.headers['content-type'] == 'audio/wav'
-    assert response.headers['x-earshot-audio'] == 'local-cache'
-    assert response.content == b'RIFFcached'
+    assert response.headers['content-type'] == 'audio/mpeg'
+    assert response.headers['x-earshot-audio'] == 'elevenlabs'
+    assert response.content == mp3 and called == ['Got it.']
+    receipts = live.runtime.audit.snapshot()
+    assert len(receipts) == 1 and receipts[0]['operation'] == 'text_to_speech'
+    assert receipts[0]['request_id'] == 'unit-test-tts'
+    assert response.headers['x-earshot-receipt-id'] == receipts[0]['receipt_id']
+    assert receipts[0]['output_sha256'] == sha256(response.content).hexdigest()
 
 
-def test_scripted_fixture_is_labeled_and_uses_common_pipeline(live):
-    manifest = live.client.get('/demo/manifest').json()
-    assert len(manifest['fixtures']) == 5
-    fixture = manifest['fixtures'][0]
-    response = live.client.post('/demo/teach/' + str(fixture['id']))
-    assert response.status_code == 200
-    result = response.json()
-    assert result['source'] == 'scripted_fixture' and result['parsed']
-    assert result['transcript'] == fixture['transcript']
-    assert result['confirmation'] == fixture['confirmation']
-    assert live.client.get('/demo/audio/' + fixture['audio']).content.startswith(b'RIFF')
-    assert_error(live.client.get('/demo/audio/unknown.wav'), 404)
-    assert_error(live.client.post('/demo/teach/unknown'), 404)
+def test_prerecorded_input_routes_are_unavailable_without_learning(live):
+    before = live.runtime.policy.learning_state()
+    for method, path in [("GET", "/demo/manifest"), ("GET", "/demo/audio/1.wav"),
+                         ("POST", "/demo/teach/1"), ("POST", "/demo/teach/unknown")]:
+        assert_error(live.client.request(method, path), 404)
+    assert live.runtime.policy.learning_state() == before
+    assert live.runtime.audit.snapshot() == []
+    status = live.client.get('/voice/status').json()
+    assert status['cached_confirmations'] is False and status['scripted_fixtures'] is False
 
 
 def test_replay_controls_and_bad_timestamp(live):
@@ -687,3 +721,108 @@ def test_failed_replay_control_returns_actionable_error(live):
     body = assert_error(response, 503)
     assert 'restart' in body['error']['message'].lower()
     assert live.client.get('/health').json()['status'] == 'degraded'
+
+
+def test_teaching_and_undo_receipts_fingerprint_actual_classifier_changes(live):
+    policy = live.runtime.policy
+
+    def actual_fingerprint():
+        state = {"weights": dict(policy.classifier.weights), "intercept": policy.classifier.intercept}
+        return sha256(json.dumps(state, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
+
+    initial_weights = dict(policy.classifier.weights)
+    initial_intercept = policy.classifier.intercept
+    initial_hash = actual_fingerprint()
+    result = teach(live.client)
+    learned_hash = actual_fingerprint()
+    receipt = result['evidence']
+
+    assert receipt['operation'] == 'teach' and receipt['source'] == 'text'
+    assert receipt['parse']['source'] == 'local' and not receipt['parse']['provider_attempted']
+    assert receipt['learning_before']['classifier_state_sha256'] == initial_hash
+    assert receipt['learning_after']['classifier_state_sha256'] == learned_hash != initial_hash
+    assert policy.classifier.weights != initial_weights
+    assert receipt['learning_after']['nonzero_weights'] == sum(value != 0 for value in policy.classifier.weights.values())
+    assert receipt['learning_after']['training_examples'] == result['examples_learned'] == 2000
+    assert receipt['learning_after']['training_batches'] == 1
+    assert receipt['utterance_sha256'] == sha256(TEACH_TEXT.encode()).hexdigest()
+    assert 'explicit_scoped_rule' in receipt['visibility_method']
+    response = live.client.post('/undo/' + result['rule_id'])
+    assert response.status_code == 200
+    undone = response.json()['evidence']
+    assert undone['operation'] == 'undo'
+    assert undone['learning_before']['classifier_state_sha256'] == learned_hash
+    assert undone['learning_after']['classifier_state_sha256'] == initial_hash == actual_fingerprint()
+    assert dict(policy.classifier.weights) == initial_weights and policy.classifier.intercept == initial_intercept
+    assert undone['learning_after']['training_examples'] == 0
+    assert undone['learning_after']['model_version'] == 3
+    persisted = [json.loads(line) for line in live.runtime.audit.path.read_text().splitlines()]
+    assert persisted == [receipt, undone]
+
+
+def test_evidence_reports_recorded_source_current_state_and_real_operation_receipts(live):
+    initial = live.client.get('/evidence')
+    assert initial.status_code == 200
+    document = initial.json()
+    assert document['data_kind'] == 'recorded_dataset_replay'
+    assert document['current_learning_state'] == live.runtime.policy.learning_state()
+    assert document['recent_operations'] == []
+    assert any('not a live plant' in limit for limit in document['limits'])
+    for provider, filename in [('nebius', 'nebius_live_parse.json'),
+                               ('elevenlabs_stt', 'elevenlabs_live_stt.json'),
+                               ('elevenlabs_tts', 'elevenlabs_live_tts.json')]:
+        path = CONFIG.data.processed_dir / filename
+        if path.is_file():
+            assert document['provider_validation'][provider] == json.loads(path.read_text())
+        else:
+            assert provider not in document['provider_validation']
+    result = teach(live.client)
+    response = live.client.post('/undo/' + result['rule_id'])
+    assert response.status_code == 200
+    document = live.client.get('/evidence').json()
+    assert document['current_learning_state'] == live.runtime.policy.learning_state()
+    assert document['recent_operations'] == [result['evidence'], response.json()['evidence']]
+    assert [row['operation'] for row in document['recent_operations']] == ['teach', 'undo']
+
+
+def test_source_proof_is_invalidated_when_verified_files_change(live, tmp_path):
+    source = tmp_path / 'recorded.csv'
+    source.write_text('timestamp,value\n2025-02-21,12\n')
+    live.runtime.source_evidence = {'status': 'verified', 'verified_at': 'startup'}
+    live.runtime.source_file_stamps = {str(source): server._file_stamp(source)}
+    assert live.client.get('/evidence').json()['source_verification']['status'] == 'verified'
+    source.write_text('timestamp,value\n2025-02-21,1200\n')
+    proof = live.client.get('/evidence').json()['source_verification']
+    assert proof['status'] == 'invalidated'
+    assert proof['changed_files'] == [str(source)]
+    source.unlink()
+    assert live.client.get('/evidence').json()['source_verification']['status'] == 'invalidated'
+
+
+def test_old_receipt_file_does_not_verify_current_runtime(live, monkeypatch, tmp_path):
+    (tmp_path / 'source_evidence.json').write_text('{"status":"verified","old":true}')
+    monkeypatch.setattr(server.CONFIG.data, 'processed_dir', tmp_path)
+    assert live.client.get('/evidence').json()['source_verification'] == {'status': 'not_verified'}
+
+
+def test_invalid_unicode_cannot_fail_after_committing_teaching(live):
+    before = live.runtime.policy.learning_state()
+    payload = json.dumps({'text': TEACH_TEXT + '\ud800'}, ensure_ascii=True)
+    response = live.client.post('/teach', content=payload, headers={'Content-Type': 'application/json'})
+    assert response.status_code == 422
+    # Pydantic may reject the surrogate before the shared teaching guard.
+    assert response.json()['error']['code'] in {'invalid_request', 'invalid_text_encoding'}
+    assert live.runtime.policy.learning_state() == before
+    assert live.runtime.audit.snapshot() == []
+
+
+def test_invalid_provider_transcript_is_rejected_before_learning(live, monkeypatch):
+    before = live.runtime.policy.learning_state()
+    monkeypatch.setattr(voice, 'transcribe_with_evidence', lambda *_: (
+        TEACH_TEXT + '\ud800', {'operation': 'speech_to_text', 'provider': 'unit-test-mock'}))
+    live.client.post('/killswitch', json={'on': False})
+    response = live.client.post('/listen', content=b'unit-test-mocked-audio', headers={'Content-Type': 'audio/wav'})
+    assert response.status_code == 422
+    assert response.json()['error']['code'] == 'invalid_text_encoding'
+    assert live.runtime.policy.learning_state() == before
+    assert [receipt['operation'] for receipt in live.runtime.audit.snapshot()] == ['speech_to_text']

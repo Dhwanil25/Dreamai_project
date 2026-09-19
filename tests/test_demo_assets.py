@@ -1,4 +1,4 @@
-"""Verify demo claims and assets against the actual local source artifacts.
+"""Verify recorded source navigation and timing against actual local artifacts.
 
 The runtime integration warms one real source interval once. Every policy uses
 an isolated temporary journal, and no test generates or replaces demo assets.
@@ -6,12 +6,10 @@ an isolated temporary journal, and no test generates or replaces demo assets.
 
 import asyncio
 from hashlib import sha256
-from io import BytesIO
 import json
 from pathlib import Path
 import socket
 from time import perf_counter
-import wave
 
 import pandas as pd
 import pytest
@@ -55,11 +53,6 @@ def vocabulary():
 
 
 @pytest.fixture(scope="module")
-def manifest():
-    return json.loads((PROJECT_ROOT / "demo/utterances/manifest.json").read_text())
-
-
-@pytest.fixture(scope="module")
 def alarms():
     path = CONFIG.data.processed_dir / "alarms.parquet"
     if not path.is_file():
@@ -79,17 +72,6 @@ def _assert_source_event(alarms, event):
     ]
     assert not matches.empty, f"Demo event does not exist in the source: {event}"
     assert (matches.description.eq(event["description"]) & matches.stopping.eq(event["stopping"])).any()
-
-
-def _wav_facts(payload):
-    with wave.open(BytesIO(payload), "rb") as wav:
-        assert wav.getcomptype() == "NONE"
-        assert wav.getnchannels() == 1 and wav.getsampwidth() == 2
-        assert wav.getframerate() == 16000
-        frames = wav.readframes(wav.getnframes())
-        assert len(frames) == wav.getnframes() * 2
-        assert any(frames), "A declared speech recording must contain more than silence"
-        return wav.getnframes() / wav.getframerate()
 
 
 def test_scenario_receipt_identifies_the_actual_processed_source(scenario, alarms):
@@ -151,42 +133,6 @@ def test_proof_timing_is_measured_from_the_declared_warm_resume(scenario):
         source_delta = (pd.Timestamp(proof[event_name]["ts"]) - start).total_seconds()
         assert seconds == pytest.approx(source_delta / scenario["replay"]["speed"])
     assert "seek" in proof["timing_note"].lower()
-
-
-def test_manifest_declares_five_scripted_inputs_from_real_vocabulary(manifest, vocabulary, scenario):
-    fixtures = manifest["fixtures"]
-    assert len(fixtures) == 5
-    assert {str(row["id"]) for row in fixtures} == {"1", "2", "3", "4", "5"}
-    assert {str(row["key"]) for row in fixtures} == {"1", "2", "3", "4", "5"}
-    assert "not speech recognition" in manifest["notice"].lower()
-    vocab_path = PROJECT_ROOT / "demo/vocabulary.json"
-    assert manifest["vocabulary_sha256"] == sha256(vocab_path.read_bytes()).hexdigest()
-    by_id = {str(row["id"]): row for row in fixtures}
-    for row in fixtures:
-        rule = parser.parse_utterance(row["transcript"], vocabulary)
-        assert rule is not None
-        assert rule.scope == row["expected_scope"] and rule.action == row["expected_action"]
-        assert row["confirmation"] == voice.confirmation(rule, vocabulary)
-        assert row["kind"] and row["kind"] != "speech recognition"
-    for beat_id in ("teach", "unplug"):
-        beat = _beats(scenario)[beat_id]
-        assert by_id[str(beat["fixture_id"])]["transcript"] == beat["utterance"]
-
-
-@pytest.mark.parametrize("identifier", ["1", "2", "3", "4", "5"])
-def test_fixture_wav_and_local_confirmation_cache_match_manifest(manifest, identifier):
-    row = next(row for row in manifest["fixtures"] if str(row["id"]) == identifier)
-    base = PROJECT_ROOT / "demo/utterances"
-    assert Path(row["audio"]).name == row["audio"]
-    audio = (base / row["audio"]).read_bytes()
-    assert sha256(audio).hexdigest() == row["sha256"]
-    assert _wav_facts(audio) == pytest.approx(row["duration_seconds"], abs=0.0001)
-    expected_path = voice.cache_path(row["confirmation"])
-    assert (base / row["confirmation_audio"]).resolve() == expected_path.resolve()
-    cached = voice.cached_audio(row["confirmation"])
-    assert cached is not None, "Confirmation must play locally with provider access blocked"
-    assert sha256(cached).hexdigest() == row["confirmation_sha256"]
-    assert _wav_facts(cached) == pytest.approx(row["confirmation_duration_seconds"], abs=0.0001)
 
 
 def test_real_runtime_warms_declared_interval_and_exposes_consistent_console(scenario, vocabulary, alarms, tmp_path, record_property):

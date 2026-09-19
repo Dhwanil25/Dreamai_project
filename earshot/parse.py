@@ -13,9 +13,10 @@ import os
 import re
 from typing import Any
 import unicodedata
+from urllib.parse import urlsplit
 from uuid import uuid4
 
-from openai import OpenAI
+from openai import APITimeoutError, OpenAI
 
 from earshot.config import CONFIG
 from earshot.rules import SuppressionRule
@@ -242,13 +243,49 @@ def _accept_online(content: str, text: str, turbines: set[str], codes: dict[int,
     return _rule(text, rule.scope["turbine_id"], rule.scope["alarm_code"], rule.action, rule.confidence)
 
 
+def _receipt() -> dict[str, Any]:
+    """Allocate one invocation's evidence; never share mutable call state."""
+    return {"source": "none", "provider": None, "endpoint_host": None,
+            "requested_model": None, "model": None, "request_id": None,
+            "completion_id": None, "provider_attempted": False, "attempts": 0,
+            "http_status": None, "fallback_reason": None}
+
+
+def _metadata(value: Any, key: str) -> str | None:
+    """Keep only bounded identifier metadata, excluding a reflected secret."""
+    if (not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_./:@+-]{0,255}", value)
+            or (key and key in value)):
+        return None
+    return value
+
+
 def _online(text: str, context: dict, turbines: set[str], codes: dict[int, str], aliases: dict[str, str],
-            asset: str | None, code: int | None, action: str | None) -> SuppressionRule | None:
+            asset: str | None, code: int | None, action: str | None,
+            evidence: dict[str, Any] | None = None) -> SuppressionRule | None:
+    evidence = _receipt() if evidence is None else evidence
     key = os.getenv(CONFIG.llm.api_key_env, "").strip()
     base_url = os.getenv(CONFIG.llm.base_url_env, "").strip()
     model = os.getenv(CONFIG.llm.model_env, "").strip()
-    if _offline_enabled() or not key or not base_url or not model:
+    if _offline_enabled():
+        evidence["fallback_reason"] = "offline"
         return None
+    if not key:
+        evidence["fallback_reason"] = "missing_credentials"
+        return None
+    if not base_url or not model:
+        evidence["fallback_reason"] = "missing_configuration"
+        return None
+    try:
+        endpoint = urlsplit(base_url)
+        host = endpoint.hostname
+        if endpoint.scheme not in {"https", "http"} or not host:
+            raise ValueError("Unsupported endpoint")
+    except ValueError:
+        evidence["fallback_reason"] = "invalid_endpoint"
+        return None
+    # No URL userinfo, path, query or fragment is persisted in evidence.
+    evidence.update(provider="Nebius" if host == "nebius.com" or host.endswith(".nebius.com") else "OpenAI-compatible",
+                    endpoint_host=host, requested_model=_metadata(model, key))
     vocabulary = {"turbines": sorted(turbines), "codes": [{"alarm_code": value, "description": description} for value, description in sorted(codes.items())], "turbine_aliases": aliases}
     system = (
         "Convert one operator instruction to one EARSHOT alarm-class correction. Return only one JSON object. "
@@ -267,9 +304,16 @@ def _online(text: str, context: dict, turbines: set[str], codes: dict[int, str],
         with OpenAI(base_url=base_url, api_key=key, timeout=8.0, max_retries=0) as client:
             for attempt in range(2):
                 if _offline_enabled():
+                    evidence["fallback_reason"] = "offline_changed"
                     return None
                 # SDK retries disabled; retry only returned invalid rule content.
-                response = client.chat.completions.create(model=model, messages=messages, temperature=0, response_format={"type": "json_object"})
+                evidence["provider_attempted"] = True
+                evidence["attempts"] += 1
+                response = client.chat.completions.create(model=model, messages=messages, temperature=0,
+                                                          max_tokens=512, response_format={"type": "json_object"})
+                evidence.update(model=_metadata(getattr(response, "model", None), key),
+                                request_id=_metadata(getattr(response, "_request_id", None), key),
+                                completion_id=_metadata(getattr(response, "id", None), key))
                 try:
                     choice = response.choices[0]
                     content = choice.message.content
@@ -278,50 +322,96 @@ def _online(text: str, context: dict, turbines: set[str], codes: dict[int, str],
                     if not isinstance(content, str) or not content.strip():
                         raise ValueError("Missing response content")
                     if json.loads(content) == {"error": "no_match"}:
+                        evidence["fallback_reason"] = "provider_no_match"
                         return None
                     accepted = _accept_online(content, text, turbines, codes, asset, code, action)
                     if _offline_enabled():
+                        evidence["fallback_reason"] = "offline_changed"
                         return None
+                    evidence.update(source="provider", fallback_reason=None)
                     return accepted
                 except (ValueError, TypeError, KeyError, IndexError, AttributeError) as error:
+                    evidence["fallback_reason"] = "provider_invalid_response"
                     if attempt:
                         return None
                     messages.append({"role": "user", "content": "Validation failed: " + str(error)[:1200] + ". Return corrected JSON following the original instruction, or {\"error\":\"no_match\"}."})
-    except Exception:
+    except Exception as error:
         # Provider availability must not remove local parsing; never expose keys
         # or response bodies through logging an SDK exception.
+        status = getattr(error, "status_code", None)
+        evidence["http_status"] = status if type(status) is int and 100 <= status <= 599 else None
+        evidence["request_id"] = _metadata(getattr(error, "request_id", None), key) or evidence["request_id"]
+        if isinstance(error, (APITimeoutError, TimeoutError)):
+            reason = "provider_timeout"
+        elif status in (401, 403):
+            reason = "provider_auth_error"
+        elif status == 429:
+            reason = "provider_rate_limited"
+        elif evidence["http_status"] is not None:
+            reason = "provider_http_error"
+        else:
+            reason = "provider_transport_error"
+        evidence["fallback_reason"] = reason
         return None
     return None
 
 
-def parse_utterance(text: str, context: dict[str, Any]) -> SuppressionRule | None:
-    """Return a proposed rule, or None, without changing any policy or ledger.
+def parse_utterance_with_evidence(text: str, context: dict[str, Any]) -> tuple[SuppressionRule | None, dict[str, Any]]:
+    """Return a proposed rule and its actual execution source, without writes.
 
     EARSHOT_OFFLINE=1 (or OFFLINE_MODE) forbids provider calls. Otherwise a
     configured compatible endpoint is optional; transport/validation failures
     fall back to deterministic parsing. Unknown/ambiguous references and
     unsupported restrictions return None instead of broadening the correction.
     Online confidence is >=0.85; offline confidence is 0.6, neither calibrated.
-    All ordinary input/provider errors are contained; no credentials are logged.
+    Evidence records execution and returned provider IDs, never infers provider
+    use from confidence. ``model`` is the actual response model (or None), while
+    ``requested_model`` is configured input. Failure reasons are stable codes;
+    response content, credentials and URL paths/queries are never included.
     """
+    evidence = _receipt()
     try:
         if not isinstance(text, str) or not text.strip() or len(text) > 4000:
-            return None
-        turbines, codes, aliases = _vocabulary(context)
+            evidence["fallback_reason"] = "invalid_input"
+            return None, evidence
+        try:
+            turbines, codes, aliases = _vocabulary(context)
+        except (KeyError, TypeError, ValueError):
+            evidence["fallback_reason"] = "invalid_vocabulary"
+            return None, evidence
         normalized = _normalize(text)
         if re.match(r"^(?:why|what|how|who|where|should|does|did)\b", normalized):
-            return None
+            evidence["fallback_reason"] = "missing_intent"
+            return None, evidence
         if _unsupported_qualifier(normalized) or _unhandled_negation(normalized):
-            return None
+            evidence["fallback_reason"] = "unsupported_restriction"
+            return None, evidence
         asset, bad_asset = _asset(normalized, turbines, aliases)
         code, bad_alarm = _alarm(normalized, codes)
         action = _intent(normalized)
-        if bad_asset or bad_alarm or action is None:
-            return None
+        if bad_asset or bad_alarm:
+            evidence["fallback_reason"] = "ambiguous_reference"
+            return None, evidence
+        if action is None:
+            evidence["fallback_reason"] = "missing_intent"
+            return None, evidence
         if not _offline_enabled():
-            proposed = _online(text, context, turbines, codes, aliases, asset, code, action)
+            proposed = _online(text, context, turbines, codes, aliases, asset, code, action, evidence)
             if proposed is not None:
-                return proposed
-        return _rule(text, asset, code, action, 0.6) if code is not None and action is not None else None
+                return proposed, evidence
+        else:
+            evidence["fallback_reason"] = "offline"
+        if code is None:
+            evidence["fallback_reason"] = evidence["fallback_reason"] or "no_matching_alarm"
+            return None, evidence
+        evidence["source"] = "local"
+        return _rule(text, asset, code, action, 0.6), evidence
     except Exception:
-        return None
+        evidence.update(source="none", fallback_reason="parser_error")
+        return None, evidence
+
+
+def parse_utterance(text: str, context: dict[str, Any]) -> SuppressionRule | None:
+    """Backward-compatible rule-only interface; see parse_utterance_with_evidence."""
+    rule, _ = parse_utterance_with_evidence(text, context)
+    return rule

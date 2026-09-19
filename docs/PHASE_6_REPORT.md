@@ -1,5 +1,7 @@
 # Phase 6 — text to validated correction
 
+> Historical phase document. Current provider results, source verification and removal of prerecorded input/cache paths are documented in [LIVE_VERIFICATION.md](LIVE_VERIFICATION.md). Earlier measurements describe the earlier build.
+
 Phase 6 implements `parse_utterance(text, context)`, the real-source vocabulary builder and ten fixture utterances. The parser returns a proposed `SuppressionRule` or `None`. It never calls `learn`, writes a correction ledger or changes event visibility by itself.
 
 All **314 tests passed**, including **83 parser tests** and **16 vocabulary tests**. The text-to-learning demonstration used 2,000 actual records, updated the classifier in **16.565 ms**, hid a later matching event, preserved the same code on another turbine, reconstructed the model after restart and restored visibility on undo. These are correction-mechanics checks, not false-alarm accuracy measurements.

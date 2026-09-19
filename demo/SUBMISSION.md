@@ -1,41 +1,53 @@
 # EARSHOT
 
-**The industrial AI you teach by talking to it — with replay, learning and corrections kept on the site's computer.**
+**Local industrial alarm learning from operator instructions, with inspectable source and model evidence.**
 
-Industrial event logs can bury useful information in repetitive activity. Site operators know which patterns are routine, but their explanations rarely become an immediate, inspectable model correction. EARSHOT connects an operator's instruction to a scoped local correction, updates a River classifier from real buffered observations, shows the resulting visibility change, and preserves an undoable local audit trail.
+EARSHOT connects an operator’s instruction to a scoped, reversible correction on the site’s computer. It replays real industrial observations, updates a local River classifier from buffered examples, changes the specified event visibility and records what happened. It is a monitoring prototype using recorded data, not a live plant connection or an industrial control system.
 
-The demonstration replays the **Hill of Towie wind farm open dataset**: **68,891 alarm records** and **50,327,215 numeric readings**, grouped into **272,039 sensor snapshots**. The site log averages **31.933677 logged alarm records/hour site-wide** over the selected January–March 2025 period; the ten most frequent codes account for **92.022180%** of records. These measurements do not establish a false-alarm rate, incident-detection accuracy or operator workload. Two additional records from unmapped station 91 remain in site totals.
+## The problem and the measured data
 
-Dataset attribution: [Hill of Towie wind farm open dataset, Zenodo record 22662930](https://zenodo.org/records/22662930), RES on behalf of TRIG, **CC-BY-4.0**. Aggregated project calculations and source hashes are in [baseline_stats.json](baseline_stats.json). The 90-second scenario uses actual logged timestamps and distinguishes presenter-supplied corrections from source labels.
+Operators understand recurring local operating patterns that generic monitoring software cannot infer reliably. EARSHOT provides a direct correction path and an audit trail, while preserving source records and allowing undo.
 
-## What we built
+The selected **Hill of Towie** data contains **68,891 alarm records**, **50,327,215 numeric readings**, **272,039 grouped sensor snapshots** and **21 known turbines** over January–March 2025. The site log averages **31.933677 alarm records/hour**; the ten most frequent codes account for **92.022180%** of records. Two records from unmapped station 91 remain in site totals. These measurements establish event volume, not ground-truth nuisance labels, false-alarm accuracy or operator workload.
 
-Local ingestion and source-quality checks; a reproducible alarm baseline; bounded chronological replay of a signal-major Parquet dataset; per-turbine anomaly detection; validated scoped corrections; local classifier updates; reversible persistence; a conservative vocabulary-backed text parser; FastAPI/WebSocket teaching and replay endpoints; the self-contained operator console; optional voice adapters and explicit offline fallbacks; and a repeatable, source-verified presentation scenario.
+Attribution: Alex Clerc and Elizabeth Lingkan, RES on behalf of TRIG, [Hill of Towie wind farm open dataset, Zenodo 22662930](https://zenodo.org/records/22662930), version 2.1.0, **CC-BY-4.0**. Project calculations are in [baseline_stats.json](baseline_stats.json).
 
-A `code_match` correction changes the specified scope deterministically while the local classifier also learns from buffered examples. This demonstration does not claim that a simple instruction retrains a foundational model or proves general anomaly accuracy. An untouched stopping-code example remains visible. The prototype monitors replayed data and does not control industrial equipment.
+## What is inspectable
 
-Reference repositories were reviewed before implementation. See the README's **PRIOR ART VS BUILT TODAY** section and the local, Git-ignored `reference/REUSE_NOTES.md` inventory for the distinction between prior work and this project’s implementation.
+The running **`/evidence`** endpoint exposes source hashes and row traces, current classifier-state hashes/counts, and actual operation/provider receipts. Its source audit runs afresh at server startup with a `verified_at` timestamp; detected file changes invalidate that proof until a restart. An old on-disk receipt is never substituted for the startup audit. An independent local audit checks all 68,891 alarm timestamp/station/code records and duplicate multiplicities against the original ZIP, verifies description/stopping lookups and matches 185 selected SCADA cells to their original temperature/grid CSV rows. The full SCADA count is verified through Parquet metadata; a complete raw-quarter SCADA cell comparison is not claimed.
 
-## Stack and provider disclosure
+Teaching records the accepted rule and before/after local learning state. Simple code-based corrections change visibility through an explicit scoped rule while the River classifier learns from actual buffered examples. The language model is **not fine-tuned**, and an immediate rule match is not presented as an independently learned classifier decision. Undo is inspectable and restores learning from the remaining batches.
 
-- **Python, pandas and PyArrow:** local data ingestion, validation and bounded replay.
-- **River:** Half-Space Trees and online logistic learning, alongside a custom rolling Z-score detector.
-- **FastAPI, Uvicorn and WebSockets:** one local runtime and live updates.
-- **Vanilla HTML/CSS/JavaScript:** one self-contained operator console.
-- **ElevenLabs:** optional speech-to-text and text-to-speech adapters. No live provider call was validated here because credentials were absent.
-- **Nebius AI Studio:** the example OpenAI-compatible LLM endpoint, configured for `Qwen/Qwen3-235B-A22B`. It is optional; the deterministic local parser is the tested offline path. No live LLM provider call was validated here.
-- **Installed macOS speech synthesis:** generated the five explicitly labeled synthetic demo fixtures and their local confirmation cache. This is not live transcription.
+The website serves **no prerecorded operator inputs or fixed-transcript shortcuts**. Instructions come from actual typed text or available live microphone paths. Source timestamps can be navigated without inventing observations or automatically teaching a correction. Computer-generated speech is labeled confirmation output only.
 
-With the application offline switch engaged, optional provider requests are blocked and text teaching, fixture teaching, replay, rescoring and cached confirmation remain local. In online mode, optional providers can receive audio or an utterance and controlled vocabulary; that mode does not support a never-phones-home claim. Browser speech recognition may itself use a service and is not an offline guarantee.
+## Stack and actual provider results
+
+- **Python, pandas, PyArrow:** local ingestion, validation, chronological replay and source auditing.
+- **River:** online logistic learning and Half-Space Trees; a separate custom rolling Z-score detector is the default.
+- **FastAPI, Uvicorn, WebSockets:** one local runtime, current state and auditable operator actions.
+- **Vanilla HTML/CSS/JavaScript:** the self-contained operator console.
+- **Nebius Token Factory:** a real parse succeeded in **3.652 seconds** at `https://api.tokenfactory.nebius.com/v1`, using `Qwen/Qwen3-30B-A3B-Instruct-2507`. The provider request receipt is exposed in `/evidence` and documented in [LIVE_VERIFICATION.md](../docs/LIVE_VERIFICATION.md).
+- **ElevenLabs:** live speech-to-text and text-to-speech calls both returned **HTTP 401 `missing_permissions`** with the supplied key. The required permissions are `speech_to_text` and `text_to_speech`. These provider paths are implemented but are not currently demonstrated as working; user permission correction and revalidation remain necessary.
+
+Local text teaching works without provider access. Verified on-device browser recognition is optional and depends on installed browser support. With online access enabled, audio may go to ElevenLabs and utterance/vocabulary text to Nebius. With the application offline switch engaged, new provider calls are blocked and local replay, parsing and learning continue. It does not switch off Wi-Fi or cancel requests already sent.
+
+## Built in this project
+
+The dataset adapter and baseline; bounded replay; per-asset detectors; validated rules and local classifier training; reversible persistence; conservative local/provider parsing; HTTP/WebSocket integration; operator console; live voice adapters; source audit; and operation evidence. No functions were copied from the two reviewed reference repositories. See [README’s prior-art account](../README.md#prior-art-vs-built-today) and the local Git-ignored `reference/REUSE_NOTES.md` inventory.
+
+Historical phase reports describe earlier milestones. [Current live verification](../docs/LIVE_VERIFICATION.md) records the current provider results and removal of prerecorded-input paths.
 
 ## Run
 
-From the repository root, set up the documented virtual environment and dependencies in [README.md](../README.md), and place the supplied dataset files under `data/raw/`. Raw files, Parquet, secrets and learned site state are Git-ignored; they are not bundled in the repository.
+Follow [README setup](../README.md#setup), preserving any existing local `.env`, and place the supplied sources under `data/raw/`. Raw data, credentials and learned site state remain Git-ignored.
 
 ```bash
+./venv/bin/python scripts/audit_source_evidence.py
 bash scripts/run_demo.sh
 ```
 
-Open <http://127.0.0.1:8000/>. The launcher checks the sources and assets, rebuilds missing processed data from the supplied raw files, prewarms the real hour, and pauses. The under 60-second startup target applies when preprocessing is already complete; ingesting the year ZIP is separate setup work. Ctrl+C stops only the launcher's own server. Existing corrections and their journal are retained.
+Open <http://127.0.0.1:8000/> and inspect <http://127.0.0.1:8000/evidence>. The launcher validates inputs, rebuilds missing Parquet, prewarms a genuine recorded hour and pauses. The under 60-second startup target assumes dependencies and preprocessing are complete. Ctrl+C stops only its own server; saved corrections remain.
 
-Follow [DEMO_SCRIPT.md](DEMO_SCRIPT.md): teach **“ignore generator cut-in on turbine four”**, resume to its recurrence, show the untouched stopping record, engage the offline switch, and teach **“ignore fast cut-out of generator on turbine four”**. Fixture keys 1–5 are visibly labeled scripted replay. Live microphone behavior and projector readability require a human rehearsal on the presentation machine.
+The process environment takes precedence over `.env`. A fresh unconfigured checkout defaults offline; the current local configuration can enable providers with `EARSHOT_OFFLINE=0`. To force local-only execution, run `EARSHOT_OFFLINE=1 ./scripts/run_demo.sh`.
+
+The [90-second guide](DEMO_SCRIPT.md) uses instructions entered during the presentation, a real recurrence and an untouched stopping record. Provider permission fixes, microphone behavior and projector legibility must be checked before claiming a successful live voice demonstration.
