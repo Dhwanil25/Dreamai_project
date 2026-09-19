@@ -2,15 +2,17 @@
 
 **The industrial AI you teach by talking to it — and it never phones home.**
 
-EARSHOT is a local industrial monitoring project for a hackathon demo. Its planned sensor replay, anomaly detection, and operator feedback loop will let a site retain its own operational knowledge.
+EARSHOT is a local industrial monitoring project for a hackathon demo. Its anomaly detectors and teaching engine run locally; sensor replay, natural-language parsing and voice integration are still upcoming.
 
 ## Current status
 
-Phase 4 adds a reproducible alarm baseline to the real-data ingestion pipeline. January–March 2025 contains **68,891 alarm rows**, averaging **31.933677 logged records/hour site-wide**. The top ten codes account for **92.022180%** of records. These are event-log measurements; the dataset does not establish false-alarm rates or operator workload. See [the Phase 4 report](docs/PHASE_4_REPORT.md) for methodology and verification.
+Phase 5 implements validated correction rules, Z-score and Half-Space Trees detectors, and a local policy engine with a River logistic classifier. Teaching updates classifier weights, rescoring changes buffered visibility, and undo removes the correction's training batch. Rules and training batches persist locally. On 2,000 real alarm records, a turbine-specific correction suppressed **17 matching events in 33.016 ms** while keeping the same code visible on other turbines. All **215 tests pass**. See [the Phase 5 report](docs/PHASE_5_REPORT.md) for complete validation output and limitations.
+
+Phase 4 provides the reproducible alarm baseline. January–March 2025 contains **68,891 alarm rows**, averaging **31.933677 logged records/hour site-wide**. The top ten codes account for **92.022180%** of records. These are event-log measurements; the dataset does not establish false-alarm rates or operator workload. See [the Phase 4 report](docs/PHASE_4_REPORT.md) for methodology and verification.
 
 Phase 3 also produced **50,327,215 numeric SCADA readings**. All 21 known turbines are present; two alarms have the additional unmapped station ID `91` and remain in site-wide totals. The turbine-rate denominator uses the 21 metadata turbines and excludes those two records. See [the Phase 3 report](docs/PHASE_3_REPORT.md) for ingestion details.
 
-The backend serves the local scaffold page and a health response. Unfinished business endpoints return structured HTTP 501 responses; anomaly detection, teaching, speech and replay remain unimplemented. Configuration, ingestion, baseline and backend regression tests verify this boundary. The two policy/parser test files remain placeholders, not passing business tests.
+The backend serves the local scaffold page and a health response. Detection and teaching are available through the Python library and tests; live business endpoints return structured HTTP 501 responses until Phase 7. Natural-language parsing, speech and replay remain unimplemented. The parser test file remains a placeholder; the policy suite now contains 31 real-data checks.
 
 Phase 1's reference inventory is available locally at `reference/REUSE_NOTES.md`; reference clones remain Git-ignored. Raw data, processed datasets and their detailed local reports are also Git-ignored.
 
@@ -42,7 +44,7 @@ Start the scaffold process:
 ./venv/bin/uvicorn earshot.server:app --host 127.0.0.1 --port 8000
 ```
 
-Open `http://127.0.0.1:8000/` to see the scaffold page. `/health` returns HTTP 200 with `status: "scaffold"`, `phase: 4` and `ingestion: true`; this flag describes the available local ingestion code, not a live feed or automatic dataset check. `ok: true` means the server is responding. `/openapi.json` exposes the route contracts. Interactive API documentation is disabled so the scaffold does not load CDN assets.
+Open `http://127.0.0.1:8000/` to see the scaffold page. `/health` returns HTTP 200 with `status: "scaffold"`, `phase: 5` and ingestion, detection and teaching flags set to true. These flags describe available Python libraries, not live endpoints or automatic dataset checks. `ok: true` means the server is responding. `/openapi.json` exposes the route contracts. Interactive API documentation is disabled so the scaffold does not load CDN assets.
 
 `/stats`, `/rules`, `/teach`, `/undo/{rule_id}` and `/killswitch` return HTTP 501 with a structured `not_implemented` explanation until their implementation phase. `/stream` sends an explanatory error message and closes normally. These responses do not train a model, suppress alarms or change offline controls.
 
@@ -135,8 +137,59 @@ The **12/hour operator-console reference** is an approximate average workload be
 
 Only aggregate `demo/baseline_stats.json` is tracked for later UI use. Raw records and the detailed local report remain Git-ignored. The `/stats` API and dashboard integration are still scheduled for later phases.
 
+## Verify the local teaching engine
+
+With the Phase 3 Parquet files present, run:
+
+```bash
+./venv/bin/pytest tests/test_policy.py -v
+./venv/bin/pytest -q
+```
+
+The policy tests use unchanged real records and temporary correction ledgers. This repeatable example also uses a temporary ledger, so it leaves your site's saved corrections intact:
+
+```bash
+./venv/bin/python - <<'PY'
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from time import perf_counter
+import pandas as pd
+from earshot.detector import create_detector
+from earshot.policy import PolicyLayer
+from earshot.rules import SuppressionRule
+
+alarms = pd.read_parquet('data/processed/alarms.parquet')
+with TemporaryDirectory() as directory:
+    policy = PolicyLayer(create_detector(), 2000, rules_path=Path(directory) / 'rules.jsonl')
+    for event in alarms.head(2000).to_dict('records'):
+        policy.score(event)
+    rule = SuppressionRule(
+        rule_id='demo', utterance='ignore that one',
+        scope={'turbine_id': alarms.turbine_id.iloc[0],
+               'alarm_code': int(alarms.alarm_code.value_counts().index[0]), 'signal': None},
+        pattern={'kind': 'code_match', 'window_s': 0, 'conditions': []},
+        action='suppress', confidence=0.9, taught_by='demo',
+        taught_at='2026-09-20T10:00:00Z', reversible=True,
+    )
+    print('before:', policy.stats())
+    start = perf_counter()
+    result = policy.learn(rule)
+    print('learn:', result, 'ms:', round((perf_counter() - start) * 1000, 3))
+    print('after:', policy.stats())
+    policy.undo('demo')
+    print('undo:', policy.stats())
+PY
+```
+
+`PolicyLayer(create_detector(), 2000)` normally saves to `data/processed/rules.jsonl`. Use one live writer per ledger and unique rule IDs. Restart reconstructs active rules and the classifier from recorded, weighted training batches. Detector histories, replay buffers and counters begin fresh. Invalid or truncated journal records raise a clear error; complete learn records without a commit are ignored. The original validation rule was undone; the local audit history remains at version 3 with no active rules.
+
+`config.yaml` selects `detector.method` (`zscore` or `hst`) and the policy probability, learning rate and collapse window. Detectors consume actual numeric `signals`/`features`, or `signal` plus `value`, independently per asset. Alarm-only events have anomaly score zero. HST requires a stable feature schema established by its first observed vector.
+
+`code_match` and `conditions` suppression rules apply immediately. A `learned` pattern uses the classifier threshold inside the rule's full scope and conditions; classifier confidence cannot authorize suppression on another turbine. `collapse` keeps the first matching event in each asset's window, and `escalate` or explicit critical annotations preserve visibility. All-None scope is an explicit wildcard. These rules demonstrate correction mechanics, not measured false-alarm accuracy.
+
 ## Project documents
 
+- [Phase 5 teaching engine validation](docs/PHASE_5_REPORT.md)
 - [Phase 4 baseline validation](docs/PHASE_4_REPORT.md)
 - [Phase 3 ingestion validation](docs/PHASE_3_REPORT.md)
 - [Phase 2 scaffold validation](docs/PHASE_2_REPORT.md)

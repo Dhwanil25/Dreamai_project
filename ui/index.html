@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>EARSHOT — Phase 4 baseline metrics</title>
+    <title>EARSHOT — Phase 5 local teaching engine</title>
     <style>
       :root {
         color-scheme: dark;
@@ -38,11 +38,17 @@
   <body>
     <main>
       <h1>EARSHOT</h1>
-      <p class="status">Phase 4 baseline metrics</p>
+      <p class="status">Phase 5 local teaching engine</p>
       <p>
-        Local schema discovery, dataset ingestion, and baseline alarm metrics
-        are available through the command-line scripts. Sensor replay, anomaly
-        detection, voice corrections, and local learning are not implemented.
+        Local ingestion, anomaly detection, and operator teaching are available
+        in the Python library. Sensor replay and voice capture remain unavailable.
+        Live APIs are planned for Phase 7.
+      </p>
+      <p>
+        Exercise the local teaching engine with <code>tests/test_policy.py</code>
+        and read the results in <code>docs/PHASE_5_REPORT.md</code>.
+        Backend health reports library capabilities; it does not indicate that
+        the live APIs are ready.
       </p>
       <p>
         Inspect the dataset with <code>scripts/explore_schema.py</code> and

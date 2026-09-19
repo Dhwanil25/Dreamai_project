@@ -1,7 +1,7 @@
-"""Phase 4 scaffold serving a home page, health and unavailable live features.
+"""Phase 5 scaffold serving a home page, health and unavailable live APIs.
 
-Offline ingestion and baseline alarm metrics are available through local
-command-line scripts. Replay, detection and teaching remain unimplemented.
+Offline ingestion, detection and local teaching are available as library
+capabilities. Replay and voice remain unimplemented; live APIs await Phase 7.
 Interactive API docs are disabled to avoid external CDN assets;
 /openapi.json exposes the contracts.
 """
@@ -19,8 +19,8 @@ from earshot.config import PROJECT_ROOT
 app = FastAPI(
     title="EARSHOT",
     description=(
-        "Phase 4: offline dataset ingestion and baseline alarm metrics are available "
-        "through local scripts. "
+        "Phase 5 local teaching engine: offline ingestion, detection and teaching "
+        "are available as library capabilities. "
         "The scaffold serves home and health; live operations return 501 until implemented."
     ),
     version="0.0.1",
@@ -38,7 +38,7 @@ def _unavailable_details(feature: str) -> dict[str, Any]:
     return {
         "code": "not_implemented",
         "feature": feature,
-        "message": f"{feature} is not available in the Phase 4 scaffold; its API is planned for Phase 7.",
+        "message": f"The {feature} API is not available in the Phase 5 scaffold; it is planned for Phase 7.",
         "available_in_phase": 7,
     }
 
@@ -106,16 +106,16 @@ async def rules() -> list[dict[str, Any]]:
 
 @app.get("/health")
 async def health() -> dict[str, Any]:
-    """Report liveness and implemented capabilities, not dataset/model readiness."""
+    """Report liveness and library capabilities, independently of live API readiness."""
     return {
         "ok": True,
         "status": "scaffold",
-        "phase": 4,
+        "phase": 5,
         "features": {
             "ingestion": True,
             "replay": False,
-            "detection": False,
-            "teaching": False,
+            "detection": True,
+            "teaching": True,
             "voice": False,
         },
     }

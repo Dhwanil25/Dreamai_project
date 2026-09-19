@@ -24,6 +24,11 @@ detector:
   window: 288
   threshold: 3.0
 
+policy:
+  nuisance_probability: 0.9
+  learning_rate: 0.1
+  collapse_window_s: 60
+
 replay:
   speed: 600
   buffer_events: 2000
