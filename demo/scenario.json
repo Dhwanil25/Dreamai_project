@@ -1,4 +1,136 @@
 {
-  "status": "not_configured",
-  "events": []
+  "schema_version": 1,
+  "status": "source_verified",
+  "source": {
+    "alarms_path": "data/processed/alarms.parquet",
+    "alarms_sha256": "9b99821be20e5758765e206107c0bd0e4a4225d79ac860908937320fc192220e",
+    "dataset": "Hill of Towie wind farm open dataset",
+    "citation": "https://zenodo.org/records/22662930",
+    "license": "CC-BY-4.0",
+    "timezone_note": "Alarm source timezone remains unverified; replay uses the existing naive UTC assumption."
+  },
+  "replay": {
+    "seek_ts": "2025-02-21T19:25:06",
+    "warm_until_ts": "2025-02-21T20:25:06",
+    "speed": 15,
+    "paused_after_warm": true,
+    "warm_alarm_records": 276,
+    "warm_scada_snapshots": 126,
+    "warm_event_count": 402,
+    "rule_ledger_note": "Existing site rules are retained. The launcher never creates or resets correction rules."
+  },
+  "beats": [
+    {
+      "id": "pain",
+      "title": "Pain",
+      "ts": "2025-02-21T20:25:06",
+      "description": "A real hour contains276 logged alarms across the site; the data does not label them false alarms.",
+      "seek_on_select": false,
+      "trailing_window": {
+        "start_exclusive": "2025-02-21T19:25:06",
+        "end_inclusive": "2025-02-21T20:25:06",
+        "hours": 1,
+        "alarm_records": 276,
+        "alarms_per_hour": 276.0
+      },
+      "presenter_seconds": [
+        0,
+        20
+      ]
+    },
+    {
+      "id": "teach",
+      "title": "Teach",
+      "ts": "2025-02-21T20:25:06",
+      "description": "Teach one site-local correction for T04 generator cut-in; four matching historical examples are in the prewarmed buffer.",
+      "seek_on_select": false,
+      "utterance": "ignore generator cut-in on turbine four",
+      "fixture_id": "1",
+      "expected_rule": {
+        "scope": {
+          "turbine_id": "2304513",
+          "alarm_code": 20,
+          "signal": null
+        },
+        "action": "suppress",
+        "pattern": {
+          "kind": "code_match",
+          "window_s": 0,
+          "conditions": []
+        },
+        "reversible": true
+      },
+      "expected_matching_buffer_alarms": 4,
+      "presenter_seconds": [
+        20,
+        40
+      ]
+    },
+    {
+      "id": "proof",
+      "title": "Proof",
+      "ts": "2025-02-21T20:27:35",
+      "description": "The next recorded T04 cut-in matches the taught scope. A distinct T21 pitch-lubrication stopping record remains visible.",
+      "seek_on_select": true,
+      "suppressed_event": {
+        "ts": "2025-02-21T20:27:36",
+        "turbine_id": "2304513",
+        "alarm_code": 20,
+        "description": "Large generator Cut-in",
+        "stopping": 0
+      },
+      "untaught_stopping_event": {
+        "ts": "2025-02-21T20:30:02",
+        "turbine_id": "2304530",
+        "alarm_code": 3130,
+        "description": "Pitch lubrication",
+        "stopping": 1
+      },
+      "presenter_seconds": [
+        40,
+        65
+      ],
+      "seconds_after_warm_resume": {
+        "suppressed_event": 10.0,
+        "untaught_stopping_event": 19.733333333333334
+      },
+      "timing_note": "Timings start from normal Resume at the prewarmed20:25:06 position. An explicit recovery seek to20:27:35 anchors the first available event immediately and changes wall-clock timing."
+    },
+    {
+      "id": "unplug",
+      "title": "Unplug",
+      "ts": "2025-02-21T20:30:02",
+      "description": "Engage the application offline switch and teach another local correction. Optional network providers are blocked; text and labeled fixtures still work.",
+      "seek_on_select": false,
+      "utterance": "ignore fast cut-out of generator on turbine four",
+      "fixture_id": "3",
+      "expected_rule": {
+        "scope": {
+          "turbine_id": "2304513",
+          "alarm_code": 25,
+          "signal": null
+        },
+        "action": "suppress"
+      },
+      "later_matching_event": {
+        "ts": "2025-02-21T20:45:29",
+        "turbine_id": "2304513",
+        "alarm_code": 25,
+        "description": "Fast cut-out of generator",
+        "stopping": 0
+      },
+      "later_proof_seek_ts": "2025-02-21T20:45:28",
+      "presenter_seconds": [
+        65,
+        90
+      ]
+    }
+  ],
+  "interpretation": [
+    "Utterances are presenter-supplied example corrections, not verified false-alarm labels from the dataset.",
+    "Stopping metadata is not proof of a dangerous incident; the demonstration checks visibility for an untouched scope.",
+    "code_match corrections take deterministic scoped effect; classifier state also updates from buffered real examples. No claim of production safety validation or measured anomaly accuracy is made.",
+    "The offline switch controls this application and does not disconnect Wi-Fi or recall requests already sent.",
+    "Synthetic fixture WAVs are clearly labeled scripted replay and do not demonstrate speech recognition."
+  ]
 }

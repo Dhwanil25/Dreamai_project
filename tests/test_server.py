@@ -198,7 +198,7 @@ def test_health_and_stats_report_live_policy_and_exact_local_baseline(live, sour
     assert response.status_code == 200
     health = response.json()
     assert health["ok"] is True and health["status"] == "ready"
-    assert health["phase"] == 7 and health["model_version"] == 1
+    assert health["phase"] == 10 and health["model_version"] == 1
     assert pd.Timestamp(health["replay_position"]) == source.recent[-1]["ts"]
     response = live.client.get("/stats")
     assert response.status_code == 200
@@ -233,6 +233,53 @@ def test_periodic_stats_continue_without_new_source_events(live):
         second = receive_type(websocket, "stats")
         assert first["type"] == second["type"] == "stats"
         assert live.runtime.replayer.events_emitted == 0
+
+
+def test_stats_publication_completes_before_a_new_teaching_revision(live, monkeypatch):
+    """Hold a stats send and contend for its revision with a real teach call."""
+    entered = threading.Event()
+    parsed = threading.Event()
+    release = asyncio.Event()
+    original_broadcast = live.runtime.broadcast
+    original_parse = parser.parse_utterance
+    first_stats = True
+    publication = []
+
+    async def gated_broadcast(payload):
+        nonlocal first_stats
+        if payload["type"] == "stats" and first_stats:
+            first_stats = False
+            entered.set()
+            await asyncio.wait_for(release.wait(), timeout=5)
+        await original_broadcast(payload)
+        if payload["type"] in {"stats", "taught"}:
+            publication.append((payload["type"], payload["model_version"]))
+
+    def observed_parse(text, context):
+        rule = original_parse(text, context)
+        parsed.set()
+        return rule
+
+    monkeypatch.setattr(live.runtime, "broadcast", gated_broadcast)
+    monkeypatch.setattr(parser, "parse_utterance", observed_parse)
+    with live.client.websocket_connect("/stream") as websocket, ThreadPoolExecutor(max_workers=1) as executor:
+        try:
+            assert entered.wait(5), "No periodic stats publication reached the gate"
+            # Holding publication protects the snapshot's revision, rather than
+            # allowing a new version to overtake an already prepared message.
+            assert live.runtime.lock.locked()
+            request = executor.submit(live.client.post, "/teach", json={"text": TEACH_TEXT})
+            assert parsed.wait(5)
+            assert not request.done() and live.runtime.policy.model_version == 1
+        finally:
+            live.client.portal.call(release.set)
+        result = request.result(timeout=5)
+        assert result.status_code == 200
+        stats = receive_type(websocket, "stats")
+        taught = receive_type(websocket, "taught")
+    assert stats["model_version"] == 1 and taught["model_version"] == 2
+    assert publication.index(("stats", 1)) < publication.index(("taught", 2))
+    assert "generation" in stats["replay"] and "sequence" in stats["replay"]
 
 
 def test_teach_rescores_real_buffer_and_broadcasts_to_both_clients(live, source):
@@ -388,7 +435,7 @@ def test_missing_dataset_reports_unavailable_and_closes_socket_cleanly():
         assert response.status_code == 200
         health = response.json()
         assert health["ok"] is False and health["status"] == "unavailable"
-        assert health["phase"] == 7
+        assert health["phase"] == 10
         assert health["replay_position"] is None and health["model_version"] is None
         assert isinstance(application.state.startup_error, str)
         for method, path, payload in [
@@ -534,3 +581,109 @@ def test_cancelled_worker_drains_before_releasing_policy_lock(cancellations):
 
     asyncio.run(scenario())
     assert order == ["worker-started", "worker-finished", "caller-cancelled"]
+
+
+def test_console_rescores_stable_ids_and_undo(live):
+    initial = live.client.get('/console').json()
+    assert initial['events'] and len(initial['events']) <= 200
+    assert all(item['event']['alarm_code'] is not None for item in initial['events'])
+    ids = [item['id'] for item in initial['events']]
+    assert len(ids) == len(set(ids))
+    assert all(item['verdict']['show'] for item in initial['events'])
+    result = teach(live.client)
+    updated = live.client.get('/console').json()
+    assert [item['id'] for item in updated['events']] == ids
+    assert updated['stats']['model_version'] == result['model_version']
+    assert updated['rules'][0]['rule_id'] == result['rule_id']
+    matches = [item for item in updated['events'] if item['event']['turbine_id'] == '2304513' and item['event']['alarm_code'] == 10105]
+    assert matches and all(not item['verdict']['show'] for item in matches)
+    assert all(item['model_version'] == result['model_version'] for item in updated['events'])
+    live.client.post('/undo/' + result['rule_id']).raise_for_status()
+    restored = live.client.get('/console').json()
+    assert all(item['verdict']['show'] for item in restored['events'])
+    assert restored['rules'] == []
+
+
+def test_console_snapshot_cannot_mutate_scored_event(live):
+    observations = live.runtime.policy.observations()
+    observations[-1][0]['alarm_code'] = 999999
+    assert live.runtime.policy.observations()[-1][0]['alarm_code'] != 999999
+
+
+def test_voice_offline_rejects_upload_without_provider(live, monkeypatch):
+    called = []
+    monkeypatch.setattr(voice, 'transcribe', lambda *args: called.append(args))
+    response = live.client.post('/listen', content=b'pretend microphone bytes', headers={'Content-Type': 'audio/wav'})
+    assert_error(response, 503)
+    assert not called
+    assert live.client.get('/voice/status').json()['live_voice_available'] is False
+
+
+def test_microphone_uses_common_teaching_pipeline(live, monkeypatch):
+    server.set_offline(False)
+    received = []
+    def transcription(data, mime):
+        received.append((data, mime))
+        return TEACH_TEXT
+    monkeypatch.setattr(voice, 'transcribe', transcription)
+    result = live.client.post('/listen', content=b'recorded', headers={'Content-Type': 'audio/webm;codecs=opus'}).json()
+    assert received == [(b'recorded', 'audio/webm')]
+    assert result['parsed'] and result['source'] == 'microphone'
+    assert result['transcript'] == TEACH_TEXT
+    assert result['rule_id'] in result['confirmation'] or 'turbine' in result['confirmation'].lower()
+    assert len(live.client.get('/rules').json()) == 1
+
+
+def test_microphone_result_discarded_if_switched_offline(live, monkeypatch):
+    server.set_offline(False)
+    def transcription(*args):
+        server.set_offline(True)
+        return TEACH_TEXT
+    monkeypatch.setattr(voice, 'transcribe', transcription)
+    response = live.client.post('/listen', content=b'recorded', headers={'Content-Type': 'audio/wav'})
+    assert_error(response, 503)
+    assert live.client.get('/rules').json() == []
+
+
+def test_cached_confirmation_is_served_offline(live, monkeypatch):
+    monkeypatch.setattr(voice, 'cached_audio', lambda text: b'RIFFcached')
+    def no_provider(*args):
+        pytest.fail('A cached confirmation must not contact a provider')
+    monkeypatch.setattr(voice, 'speak', no_provider)
+    response = live.client.get('/speak', params={'text': 'Got it.'})
+    assert response.status_code == 200
+    assert response.headers['content-type'] == 'audio/wav'
+    assert response.headers['x-earshot-audio'] == 'local-cache'
+    assert response.content == b'RIFFcached'
+
+
+def test_scripted_fixture_is_labeled_and_uses_common_pipeline(live):
+    manifest = live.client.get('/demo/manifest').json()
+    assert len(manifest['fixtures']) == 5
+    fixture = manifest['fixtures'][0]
+    response = live.client.post('/demo/teach/' + str(fixture['id']))
+    assert response.status_code == 200
+    result = response.json()
+    assert result['source'] == 'scripted_fixture' and result['parsed']
+    assert result['transcript'] == fixture['transcript']
+    assert result['confirmation'] == fixture['confirmation']
+    assert live.client.get('/demo/audio/' + fixture['audio']).content.startswith(b'RIFF')
+    assert_error(live.client.get('/demo/audio/unknown.wav'), 404)
+    assert_error(live.client.post('/demo/teach/unknown'), 404)
+
+
+def test_replay_controls_and_bad_timestamp(live):
+    assert live.client.post('/replay', json={'action': 'pause'}).status_code == 200
+    assert live.runtime.replayer.paused
+    assert live.client.post('/replay', json={'action': 'resume'}).status_code == 200
+    assert not live.runtime.replayer.paused
+    assert_error(live.client.post('/replay', json={'action': 'seek'}), 422)
+    assert_error(live.client.post('/replay', json={'action': 'erase'}), 422)
+
+
+def test_failed_replay_control_returns_actionable_error(live):
+    live.runtime.replay_error = 'Source read failed'
+    response = live.client.post('/replay', json={'action':'resume'})
+    body = assert_error(response, 503)
+    assert 'restart' in body['error']['message'].lower()
+    assert live.client.get('/health').json()['status'] == 'degraded'

@@ -241,11 +241,15 @@ class Replayer:
     def generation(self) -> int:
         return self._generation
 
-    def pause(self) -> None:
+    def pause(self, *, at_position: bool = False) -> None:
+        """Pause; optionally anchor to the last emitted event after fast prewarming."""
         if not self._paused:
             self._advance_clock()
             self._paused = True
             self._signal_change()
+        if at_position and self._position is not None:
+            self._clock_sim = _timestamp(self._position).value
+            self._clock_wall = time.monotonic()
 
     def resume(self) -> None:
         if self._paused:

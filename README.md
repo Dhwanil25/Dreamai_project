@@ -1,265 +1,111 @@
 # EARSHOT
 
-**The industrial AI you teach by talking to it — and it never phones home.**
+EARSHOT replays industrial sensor and alarm data on a site's own computer and learns scoped, reversible corrections from an operator's words. Its detector, teaching engine, saved knowledge, and console work locally; optional online speech and language services are disabled by default.
 
-EARSHOT is a local industrial monitoring project for a hackathon demo. Its text parser, anomaly detectors, teaching engine and replay API run locally; the interactive operator console and voice integration are still upcoming.
+## Run the demo
 
-## Current status
+With the supplied dataset already processed in this checkout:
 
-Phase 7 connects real chronological replay, text teaching, undo, statistics and saved rules to HTTP and WebSockets. Two connected clients receive the same updates, and the offline switch prevents new provider calls while local teaching continues. Replay preserves **68,891 alarms and all 50,327,215 readings** in **272,039 sensor snapshots**. A live 600× run delivered **21.30 events/second** during a measured ten-second window. All **364 tests passed**. See [the Phase 7 report](docs/PHASE_7_REPORT.md) for live API results, full-source reconciliation and limitations.
+```bash
+./scripts/run_demo.sh
+```
 
-Phase 6 turns operator text into a validated correction proposal using the site's real vocabulary. It recognizes turbine aliases, supported alarm descriptions and suppress/collapse/escalate instructions; unknown, ambiguous or unsupported requests return no rule. Offline parsing needs no keys or network. An optional compatible online parser has bounded retries and falls back locally. See [the Phase 6 report](docs/PHASE_6_REPORT.md) for validation and the text-to-learning demonstration.
+Open **http://127.0.0.1:8000**. The launcher warms a real recorded hour and pauses at the presentation's starting point. Start with **“ignore generator cut-in on turbine four”**, watch the model revision and struck-out matching events, then resume playback to see a later recurrence. Undo is available beside every correction. The offline switch stays on by default; it does not turn off the computer's Wi-Fi.
 
-Phase 5 implements validated correction rules, Z-score and Half-Space Trees detectors, and a local policy engine with a River logistic classifier. Teaching updates classifier weights, rescoring changes buffered visibility, and undo removes the correction's training batch. Rules and training batches persist locally. On 2,000 real alarm records, a turbine-specific correction suppressed **17 matching events in 33.016 ms** while keeping the same code visible on other turbines. Its **215 tests passed**. See [the Phase 5 report](docs/PHASE_5_REPORT.md) for complete validation output and limitations.
+Follow [the 90-second demo script](demo/DEMO_SCRIPT.md), [the chosen source timestamps](demo/scenario.json), and [the submission draft](demo/SUBMISSION.md). The console labels scripted recording shortcuts explicitly. They apply the recorded transcript through the real teaching engine; they are not live speech recognition.
 
-Phase 4 provides the reproducible alarm baseline. January–March 2025 contains **68,891 alarm rows**, averaging **31.933677 logged records/hour site-wide**. The top ten codes account for **92.022180%** of records. These are event-log measurements; the dataset does not establish false-alarm rates or operator workload. See [the Phase 4 report](docs/PHASE_4_REPORT.md) for methodology and verification.
+Stop the launcher with **Ctrl+C**. It owns and stops only the server it started. Use one Uvicorn worker: one process owns the replay clock, model, and append-only correction journal. Port 8000 already in use produces a clear message; stop the previous EARSHOT terminal rather than starting another writer.
 
-Phase 3 also produced **50,327,215 numeric SCADA readings**. All 21 known turbines are present; two alarms have the additional unmapped station ID `91` and remain in site-wide totals. The turbine-rate denominator uses the 21 metadata turbines and excludes those two records. See [the Phase 3 report](docs/PHASE_3_REPORT.md) for ingestion details.
+## What the data actually shows
 
-The backend now serves live APIs and a local status page. The interactive console and microphone integration are later phases. Missing inputs leave the status page and health endpoint available, with structured HTTP 503 responses from unavailable operations.
+The January–March 2025 selection contains **68,891 alarm records**, **50,327,215 numeric SCADA readings**, and **21 known turbines**. Logged alarms average **31.933677 per hour across the site**; the top ten codes account for **92.022180%** of records. The demonstration's selected trailing hour contains **276 logged alarms**, including four generator cut-in records for turbine four.
 
-Phase 1's reference inventory is available locally at `reference/REUSE_NOTES.md`; reference clones remain Git-ignored. Raw data, processed datasets and their detailed local reports are also Git-ignored.
+Source: Alex Clerc and Elizabeth Lingkan, RES on behalf of TRIG, [Hill of Towie wind farm open dataset, Zenodo record 22662930](https://zenodo.org/records/22662930), version 2.1.0, [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/). EARSHOT selects three months, reshapes numeric measurements, joins supplied descriptions, and preserves source alarm records. These transformations are local; the raw archives are unchanged. The record confirms UTC/end-of-period timestamps for ten-minute SCADA; the alarm-log timezone is not independently established.
 
-This repository is both the workspace and project root. Execution-plan paths under `~/earshot-hackathon/earshot/` resolve here, and the plan's workspace-level `reference/` directory and `preflight_report.md` also live here. Preserve the existing Git repository and origin when scaffolding later phases.
+These figures measure event logs, not verified nuisance labels, incident accuracy, or operator staffing. Two records belong to unmapped station `91` and remain in site totals. Most observed alarm codes lack supplied descriptions and are displayed as undocumented. The chart's 12/hour line is an approximate operator-console workload reference, not a universal safety limit. See [baseline evidence](docs/PHASE_4_REPORT.md) and [machine-readable measurements](demo/baseline_stats.json).
 
-## Setup and checks
+## Setup from a fresh checkout
 
-Validated with Python 3.13.7 on macOS arm64. Run from the repository root:
+Validated on macOS arm64 with Python 3.13.7. Run in the repository root:
 
 ```bash
 python3 -m venv venv
-./venv/bin/python -m pip install --upgrade pip
 ./venv/bin/python -m pip install -r requirements.txt -c requirements.lock
-mkdir -p data/raw data/processed
 cp .env.example .env
-./venv/bin/python -m pip check
-./venv/bin/pytest -q
+mkdir -p data/raw data/processed
 ```
 
-`requirements.txt` pins direct dependencies; `requirements.lock` records the resolved dependency versions from this environment and acts as installation constraints. Other Python versions/platforms have not been validated. Pytest searches only this project's `tests/`, excluding the reference repositories.
+Place the supplied ZIPs and metadata under `data/raw/` as documented in [dataset placement](docs/DATASET_PLACEMENT.md). The selected build needs `2025.zip`, `Hill_of_Towie_alarms_description.csv`, and `Hill_of_Towie_turbine_metadata.csv`; retain the field/table descriptions alongside them. Configuration selects January–March 2025.
 
-The config loader finds `config.yaml` relative to its module, resolves data paths against the project root, and reads the root `.env` without replacing existing environment variables. Schema mappings now contain the column names discovered from the real files. The selected year is 2025, months January–March.
+```bash
+./venv/bin/python scripts/explore_schema.py
+./venv/bin/python scripts/build_dataset.py
+./venv/bin/python scripts/compute_baseline.py
+./venv/bin/python scripts/build_vocabulary.py
+./scripts/run_demo.sh
+```
 
-`.env.example` uses `EARSHOT_OFFLINE=1`. The parser enforces this before constructing a provider client and before each call; local speech still needs implementation. With offline mode off and all three `LLM_*` settings populated, the optional parser sends the utterance and controlled vocabulary to the configured endpoint. Policy learning, event data and model weights remain local. Keep offline mode on for the never-phones-home demonstration. No LLM credentials were available for live provider validation; its request, validation and fallback paths were tested with local mocks.
+The launcher checks processed inputs and rebuilds missing datasets using these commands. **The sub-minute launch target assumes dependencies and processed data already exist**; initial installation and processing tens of millions of measurements take longer. Raw and processed data, secrets, site journals, logs, and reference checkouts remain Git-ignored. The WAV demonstration assets are checked in, so ordinary use does not require macOS speech tools.
 
-Start the local server from the repository root after the dataset, baseline and vocabulary have been built:
+For ordinary chronological replay from the beginning, without demo prewarming:
 
 ```bash
 ./venv/bin/uvicorn earshot.server:app --host 127.0.0.1 --port 8000
 ```
 
-Open `http://127.0.0.1:8000/` to see the status page. `/health` reports `phase: 7`, the replay position and model version; `ok: true` means initialization succeeded and replay has not failed. `/openapi.json` exposes route contracts. Interactive API documentation is disabled so the app does not load CDN assets. Replay starts when the server starts and advances even when no browser is connected. Run one worker: the clock, policy and correction journal have one owner.
+## How teaching works
 
-`/stats`, `/rules`, `/teach`, `/undo/{rule_id}` and `/killswitch` are live. `/stream` broadcasts real events and verdicts, teaching/undo/link updates, and dynamic statistics every two seconds. Malformed requests return structured 422 errors; unavailable operations return structured 503 errors. Unparseable teaching text returns HTTP 200 with `parsed: false` and does not change the model.
+```text
+Local ZIPs + metadata -> Parquet -> chronological replay -> per-asset detector
+                                           |                     |
+                                           +----> local policy <-+
+                                                      |
+Operator text / verified local speech -----------------+
+        |                                             |
+        +-> validated scoped rule -> labeled buffer -> River classifier
+                                      |               |
+                               JSONL journal <--------+ -> revision + rescore
+                                                      |
+                                               local console / undo
 
-If a server was running before a code update, stop it with Ctrl+C and rerun the startup command. The original Phase 2 route stubs raised unhandled `NotImplementedError`, causing HTTP 500 even on the home page and health endpoint; the scaffold now handles these cases explicitly.
-
-## Verify the live API
-
-With the server running, open another terminal in this directory:
-
-```bash
-./venv/bin/python scripts/verify_live_api.py
+Optional online mode: microphone -> ElevenLabs; text -> Nebius/Qwen-compatible API
+Offline switch: block those application provider calls; local teaching continues
 ```
 
-The script connects two WebSocket clients, captures five full events, teaches two corrections, verifies teaching after the offline switch, and measures the stream rate. It then undoes only its own rules and restores the prior offline setting. The audit journal keeps the teaching/undo revisions. Full local evidence is written to `data/processed/phase7_api_validation.json`; source events and the journal remain Git-ignored.
+A correction becomes a validated rule with an asset, alarm code, action, and audit identity. The policy labels matching buffered alarms and counter-examples, updates a local River logistic classifier, writes the exact training batch to disk, increments the revision, and rescores recent observations. Simple alarm-code corrections take effect through their explicit rule immediately. This is not retraining a large language model. Numeric sensor observations separately update the rolling anomaly detector.
 
-To apply a correction yourself:
+Undo revokes the rule and reconstructs the classifier from remaining training batches. A restart restores accepted rules and training; detector history and stream counters start fresh. Seek clears recent observations while retaining teaching. Explicit critical/emergency events and escalation rules stay visible; the dataset's `stopping` flag alone does not prove an incident is dangerous. The prototype advises on recorded data and does not operate equipment.
+
+The live ring holds 2,000 merged observations, including sensor snapshots. The displayed trailing-hour count is limited to that ring and is not extrapolated from a shorter interval. Suppressing the chosen four T04 events lowers the selected hour from 276 to 272; it does not make the whole site's alarm flood disappear.
+
+## Voice and offline behavior
+
+- **Optional live provider:** set `ELEVENLABS_API_KEY` in `.env`, restart, and explicitly turn offline mode off. Hold the talk button (or Space outside text fields) and release to submit one clip. Audio goes to ElevenLabs; the resulting transcript uses the same local teaching endpoint logic. Live provider quality is unverified without credentials.
+- **On-device browser speech:** offered only if the browser supports `processLocally` and reports an installed language pack. EARSHOT never silently substitutes cloud browser recognition in offline mode. Permission and browser support vary. [Browser contract](https://developer.mozilla.org/en-US/docs/Web/API/SpeechRecognition/processLocally).
+- **Scripted fallback:** buttons/keys 1–5 play local synthetic recordings and apply their disclosed transcripts. Five spoken confirmations are cached as WAV files. These work without credentials or network and are visibly labeled.
+- **Text:** always available. Unsupported or ambiguous instructions do not change the model.
+
+Online parsing optionally uses `LLM_BASE_URL`, `LLM_API_KEY`, and `LLM_MODEL`; `.env.example` includes a Nebius/Qwen example. Online mode can send text/vocabulary to that provider and voice/audio to ElevenLabs. Detector state, source events, and classifier weights stay local. The default `EARSHOT_OFFLINE=1` blocks application provider calls, including before retries. A switch cannot recall a request already sent; late provider results are rejected after switching offline. Cached confirmations are served locally first.
+
+Provider failures have bounded timeouts and clear fallbacks. Browser microphone permissions, local recognition availability, and room-volume checks require a person at the machine. This prototype's fully local live voice experience depends on verified browser speech support; the recordings demonstrate teaching mechanics without claiming that transcription occurred.
+
+## Inspect and validate
 
 ```bash
+./venv/bin/pytest -q
+./venv/bin/python -m pip check
 curl -s http://127.0.0.1:8000/health
-curl -s -X POST http://127.0.0.1:8000/teach \
-  -H 'Content-Type: application/json' \
-  -d '{"text":"ignore the cable untwist alarm on turbine four"}'
 curl -s http://127.0.0.1:8000/rules
-curl -s -X POST http://127.0.0.1:8000/killswitch \
-  -H 'Content-Type: application/json' -d '{"on":true}'
 ```
 
-Use the returned `rule_id` with `POST /undo/{rule_id}` to revoke your correction. A rule can be accepted before a matching event reaches the buffer; `newly_suppressed_count: 0` means no currently buffered event changed. The default cable-untwist/T04 event occurs later in January, so the early live replay may have no positive example yet.
+`/health`, `/stats`, `/console`, `/rules`, and `/openapi.json` expose local state and contracts. `/stream` publishes events, teaching, undo, link state, and statistics. `/teach`, `/listen`, `/undo/{rule_id}`, `/killswitch`, and `/replay` accept local actions. Replay controls pause/resume or seek to a source timestamp. Missing inputs leave the page and health endpoint available; unavailable operations return structured errors.
 
-SCADA is read in bounded time slices and grouped by timestamp/turbine, then merged with alarms. Snapshot events have `alarm_code: null` and actual `signals`; alarm events retain their original fields and empty `signals`. Sensor values are neither carried forward onto alarm rows nor invented. Sensor observations update the detector but do not inflate alarm counts or serve as counter-examples for a code-specific correction. The live ring holds the last 2,000 merged observations, so the available alarm training set can contain fewer than 2,000 rows.
+Meaningful tests cover real-data ingestion/reconciliation, scoped learning, undo/persistence, provider-free operation, concurrent clients, offline races, cached voice, and scripted teaching. For optional browser regression, install the development tool with `./venv/bin/python -m pip install playwright`, then run `./venv/bin/python scripts/verify_browser.py` against the prewarmed demo. It uses installed Chrome, temporarily teaches and undoes its own corrections, and saves screenshots locally. Playwright is not an application dependency. Final measured results and local evidence paths are in [the remaining-phases report](docs/PHASES_8_10_REPORT.md).
 
-`alarms_per_hour_current` counts visible buffered alarms within the trailing simulated hour; its clock advances with sensor observations. It remains buffer-limited. The 600× speed controls timestamp spacing, not a fixed events-per-second target. `Replayer` also exposes pause, resume, seek and speed controls in Python; HTTP playback controls are not part of this phase. Seeking clears observation history while retaining taught rules and classifier state.
+## PRIOR ART VS BUILT TODAY
 
-The offline switch gates optional application provider calls; it does not disable the computer's Wi-Fi or cancel a request already sent. Online results are rechecked before being applied after a switch. Voice remains unavailable. The validation server was shut down cleanly after testing; use the startup command above to run it again.
+The local [Phase 1 reference inventory](reference/REUSE_NOTES.md) reviewed `Dhwanil25/autonomous-ml-pipeline` at `ef26b071abd73979daff1bd7a7242afeded8c934` and `RAIN-Lab-AI/DOM_OS_Simulator` at `618295eaa460f3b21dd0e68cc464a92b65762b5a`. That inventory and both private clones are intentionally ignored by Git.
 
-## First demo
+**Functions copied from either repository: none.** The inventory's COPY recommendations were candidates, not completed extraction. EARSHOT's cadence handling, replay timing, inline chart, and other implementation use fresh code; no reference module is imported or required at runtime. Concepts such as per-asset scoping, chronological observations, local model revisions, and an inspectable console informed the design.
 
-1. Load the supplied dataset locally and show its actual sensor signals.
-2. Replay a recorded interval and surface candidate anomalies.
-3. Select one nuisance event and record an operator's explanation by voice, with a text input available during development.
-4. Preview the specific local correction, then apply it to the site's knowledge store.
-5. Replay a later, matching event and show the effect of the correction.
-6. Show a different anomaly still being raised.
-7. Restart the app and repeat the correction test with Wi-Fi disabled to demonstrate persistence and offline operation.
-
-The demo should distinguish measured results, human labels, and any synthetic scenarios. It must not report anomaly accuracy or false-alarm reduction unless the dataset supports those measurements.
-
-## Build boundaries
-
-- Sensor records, audio, transcripts, learned state, and audit events stay on the demo computer.
-- All application assets and any required model weights must be installed before the offline demonstration.
-- Speech transcription must run locally. A cloud-backed browser speech service would not satisfy the product requirement.
-- The first correction mechanism must be described honestly: a stored rule, a learned local classifier, and a retrained detector are different implementations.
-- A correction targets a specific operating pattern and site. It does not permanently disable an entire sensor or silently remove the original event.
-- Corrections can be inspected and revoked. Explicit critical-limit events remain visible in the prototype.
-- This prototype replays data and advises an operator; it does not control industrial equipment.
-
-## Dataset intake
-
-All eight supplied files are copied into this workspace's `data/raw/`: the 2024, 2025 and 2026 year ZIPs, the optional ShutdownDuration ZIP, and the four companion CSVs. Copies were SHA-256 verified, original Downloads files were preserved, and archives remain compressed. The ignored `data/dataset_placement_manifest.json` records this local placement. Phase 3 processes only January–March of `2025.zip`; the remaining archives are retained for later selection.
-
-When setting up another checkout, place `2025.zip` in its `data/raw/` without unzipping it. The other supplied archives are optional for that configured year. Include these four companion files with their original names:
-
-- `Hill_of_Towie_alarms_description.csv`
-- `Hill_of_Towie_tables_description.csv`
-- `Hill_of_Towie_turbine_fields_description.csv`
-- `Hill_of_Towie_turbine_metadata.csv`
-
-The archive and metadata remain local and Git-ignored. The original plan's `~/earshot-hackathon/earshot/data/raw/` path maps to this repository's `data/raw/`.
-
-## Build and inspect the local dataset
-
-With the supplied files in place, run from the repository root. No API keys or internet connection are needed:
-
-```bash
-./venv/bin/python scripts/explore_schema.py
-./venv/bin/python scripts/build_dataset.py
-./venv/bin/pytest -q
-```
-
-Discovery prints exact headers, types, null counts, full sample rows and metadata. Building reads ZIP members in memory without extracting them, writes `data/processed/alarms.parquet` and `scada.parquet`, and appends coverage to `data/processed/schema_report.md`. Machine-readable counts are saved in `data/processed/ingestion_report.json`. Rerunning the build replaces its outputs and coverage section. Missing required inputs cause a clear error; no substitute data is generated.
-
-Inspect results without rebuilding:
-
-```bash
-./venv/bin/python - <<'PY'
-import pandas as pd
-from earshot.config import CONFIG
-for name in ('alarms', 'scada'):
-    frame = pd.read_parquet(CONFIG.data.processed_dir / f'{name}.parquet')
-    print(name, 'rows:', len(frame), 'columns:', list(frame.columns))
-    print(frame.head().to_string(index=False))
-    del frame
-PY
-cat data/processed/schema_report.md
-```
-
-Alarm columns are `ts`, `turbine_id`, `alarm_code`, `description`, `stopping`. SCADA columns are `ts`, `turbine_id`, `signal`, `value`; string-valued categories keep the larger table compact. Only temperature and turbine-grid tables are ingested. The categorical grid status field is explicitly excluded; all numeric fields and their nulls remain. Monthly endpoint overlaps are resolved by keeping timestamps inside each source month.
-
-Unknown codes keep `(undocumented)` descriptions and `stopping=-1`; missing alarm endings do not establish stopping status. Raw alarm duplicates are retained and reported. Timestamps have no source timezone declaration: the output's naive UTC interpretation is an explicit, unverified assumption. Station IDs retain their source values; turbine display names come from the metadata mapping. Documentation and stopping classifications do not identify false alarms.
-
-Before choosing a detector, inspect sampling intervals, missing values, repeated records, sensor ranges, operating cycles, and label coverage. Keep a later replay interval separate when evaluating whether a correction generalizes.
-
-## Compute and inspect the baseline
-
-After Phase 3 has produced the alarm Parquet, run:
-
-```bash
-./venv/bin/python scripts/compute_baseline.py
-cat data/processed/baseline_report.md
-./venv/bin/python -m json.tool demo/baseline_stats.json
-./venv/bin/pytest -q
-```
-
-The command prints the complete report and writes both artifacts. The versioned JSON includes source checksums, rates, Pareto, top codes, every discovered group and its pairwise support counts, every qualifying flood bin, consecutive runs, stopping classifications and duplicate sensitivity. Values retain computed precision in JSON; the report formats them for reading. Missing, invalid or suspicious inputs stop publication without inventing substitute records. Runs need no API keys or network access.
-
-Floods use fixed, clock-aligned, half-open ten-minute bins containing more than ten records; consecutive flagged bins are reported as runs. Co-occurrence requires another code on the same station within inclusive ±60 seconds, with at least 80% support in **both** directions. Maximal cliques keep every pair in a group above the threshold. All qualifying groups remain visible; a member with fewer than 20 observations flags limited evidence. Co-occurrence does not establish a common cause or permission to suppress an event.
-
-The **12/hour operator-console reference** is an approximate average workload benchmark, not a universal safety limit. The site log's ratio to that reference is descriptive because annunciation, routing and staffing are unknown. Per-turbine rates are asset diagnostics. [ISA background](https://www.isa.org/intech-home/2016/may-june/features/getting-the-most-from-your-safety-alarms)
-
-Only aggregate `demo/baseline_stats.json` is tracked for UI use. Raw records and the detailed local report remain Git-ignored. The `/stats` API now includes this baseline alongside live policy statistics; the operator console follows in Phase 8.
-
-## Teach with text and see what changes
-
-Run this from the repository root:
-
-```bash
-EARSHOT_OFFLINE=1 ./venv/bin/python scripts/demo_teaching.py
-```
-
-It parses “ignore the cable untwist alarm on turbine four,” displays the proposed rule, and applies it to 2,000 real events in a temporary local ledger. The output shows before/after counts, changed classifier weights, a later matching event, the same code on another turbine, restart and undo. It leaves your saved site corrections unchanged. Try another supported sentence with `--text "group pitch lubrication on turbine 4"`.
-
-Teaching is a sequence:
-
-1. `parse_utterance(text, context)` resolves words against real metadata. Here, “turbine four” becomes station `2304513` and “cable untwist” becomes code `10105`. Parsing only proposes a rule.
-2. `policy.learn(rule)` saves the correction, labels matching buffered events as nuisance examples and other eligible events as counter-examples, then updates the local River logistic classifier. The model version increments.
-3. The policy rescans its buffer and applies the correction to future matching events. Ordinary code rules take effect immediately; the classifier also changes its weights. A `learned` pattern uses classifier probability within its authorized scope.
-4. `policy.undo(rule.rule_id)` removes the correction, rebuilds the classifier from remaining training batches and restores buffered visibility.
-
-This is supervised feedback from the operator's instruction. It does not prove an event is a false alarm or train a general-purpose language model. The live `/teach` API now runs this sequence. Voice recording and the browser's teach button are later phases.
-
-The cached vocabulary contains 22 observed station IDs, 192 observed codes, seven documented alarm descriptions and metadata-derived aliases for the 21 known turbines. Station `91` has no invented turbine number. Undocumented codes can be referenced explicitly by number, but their meanings are not guessed. The generator-winding-temperature example in the plan has no matching description here, so it returns no rule.
-
-Rebuild the cache whenever the source dataset changes, then verify:
-
-```bash
-./venv/bin/python scripts/build_vocabulary.py
-EARSHOT_OFFLINE=1 ./venv/bin/pytest tests/test_parse.py -v
-./venv/bin/pytest -q
-```
-
-Supported offline corrections name one observed alarm class and optionally one turbine, with suppress, collapse or escalate intent. Different named assets/codes, unknown identities, conflicting intentions, exclusions and unsupported time/sensor conditions return no rule. Negative suppression such as “don't ignore” becomes escalation when the alarm is resolvable. Collapse uses the configured 60-second per-turbine window; it does not infer a physical fault family. Confidence values 0.6 offline and at least 0.85 online are parser labels, not measured correctness probabilities.
-
-## Verify the local teaching engine
-
-With the Phase 3 Parquet files present, run:
-
-```bash
-./venv/bin/pytest tests/test_policy.py -v
-./venv/bin/pytest -q
-```
-
-The policy tests use unchanged real records and temporary correction ledgers. This repeatable example also uses a temporary ledger, so it leaves your site's saved corrections intact:
-
-```bash
-./venv/bin/python - <<'PY'
-from pathlib import Path
-from tempfile import TemporaryDirectory
-from time import perf_counter
-import pandas as pd
-from earshot.detector import create_detector
-from earshot.policy import PolicyLayer
-from earshot.rules import SuppressionRule
-
-alarms = pd.read_parquet('data/processed/alarms.parquet')
-with TemporaryDirectory() as directory:
-    policy = PolicyLayer(create_detector(), 2000, rules_path=Path(directory) / 'rules.jsonl')
-    for event in alarms.head(2000).to_dict('records'):
-        policy.score(event)
-    rule = SuppressionRule(
-        rule_id='demo', utterance='ignore that one',
-        scope={'turbine_id': alarms.turbine_id.iloc[0],
-               'alarm_code': int(alarms.alarm_code.value_counts().index[0]), 'signal': None},
-        pattern={'kind': 'code_match', 'window_s': 0, 'conditions': []},
-        action='suppress', confidence=0.9, taught_by='demo',
-        taught_at='2026-09-20T10:00:00Z', reversible=True,
-    )
-    print('before:', policy.stats())
-    start = perf_counter()
-    result = policy.learn(rule)
-    print('learn:', result, 'ms:', round((perf_counter() - start) * 1000, 3))
-    print('after:', policy.stats())
-    policy.undo('demo')
-    print('undo:', policy.stats())
-PY
-```
-
-`PolicyLayer(create_detector(), 2000)` normally saves to `data/processed/rules.jsonl`. Use one live writer per ledger and unique rule IDs. Restart reconstructs active rules and the classifier from recorded, weighted training batches. Detector histories, replay buffers and counters begin fresh. Invalid or truncated journal records raise a clear error; complete learn records without a commit are ignored. Demo validations undo their own corrections and retain the audit revisions.
-
-`config.yaml` selects `detector.method` (`zscore` or `hst`) and the policy probability, learning rate and collapse window. Detectors consume actual numeric `signals`/`features`, or `signal` plus `value`, independently per asset. Alarm-only events have anomaly score zero. HST requires a stable feature schema established by its first observed vector.
-
-`code_match` and `conditions` suppression rules apply immediately. A `learned` pattern uses the classifier threshold inside the rule's full scope and conditions; classifier confidence cannot authorize suppression on another turbine. `collapse` keeps the first matching event in each asset's window, and `escalate` or explicit critical annotations preserve visibility. All-None scope is an explicit wildcard. These rules demonstrate correction mechanics, not measured false-alarm accuracy.
-
-## Project documents
-
-- [Phase 7 replay and live API validation](docs/PHASE_7_REPORT.md)
-- [Phase 6 text parsing and teaching validation](docs/PHASE_6_REPORT.md)
-- [Phase 5 teaching engine validation](docs/PHASE_5_REPORT.md)
-- [Phase 4 baseline validation](docs/PHASE_4_REPORT.md)
-- [Phase 3 ingestion validation](docs/PHASE_3_REPORT.md)
-- [Phase 2 scaffold validation](docs/PHASE_2_REPORT.md)
-- [Phase 0 preflight report](preflight_report.md)
-- [Original elevator pitch](docs/PITCH.md)
-- [Implementation and presentation plan](docs/DEMO_PLAN.md)
+Written in this project's implementation phases: the Hill of Towie adapter and measured baseline, bounded replay, rolling detectors, validated rules, local correction journal and River training, conservative parser, FastAPI/WebSocket server, operator console, optional voice adapters, local demonstration audio, and rehearsal/validation scripts. Third-party dependencies remain their respective upstream projects. See [the implementation plan](docs/PHASES_8_10_PLAN.md) and the individual phase reports under `docs/`.

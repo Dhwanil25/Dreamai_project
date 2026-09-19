@@ -136,6 +136,11 @@ class PolicyLayer:
     def verdicts(self) -> list[Verdict]:
         return [record.verdict for record in self._records]
 
+    def observations(self) -> list[tuple[dict[str, Any], Verdict]]:
+        """Return aligned scored copies, independent of the replay producer's ring."""
+        with self._lock:
+            return [(deepcopy(record.event), record.verdict) for record in self._records]
+
     @staticmethod
     def _numeric_features(event: dict[str, Any]) -> dict[str, float]:
         result: dict[str, float] = {}
