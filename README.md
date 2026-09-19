@@ -6,7 +6,9 @@ EARSHOT is a proposed local industrial monitoring application for a hackathon de
 
 ## Current status
 
-This workspace contains the project brief and presentation plan. The application, detector, and speech integration are not implemented yet. The next input is the user's dataset; its structure and labels will determine the first working demonstration.
+Phase 0 is complete: the development tools, GitHub authentication, both private reference repositories, and required outbound connectivity have been checked. See the [preflight report](preflight_report.md) for evidence and limitations. The application, detector, and speech integration are not implemented yet; Phase 1 is next.
+
+This repository is both the workspace and project root. Execution-plan paths under `~/earshot-hackathon/earshot/` resolve here, and the plan's workspace-level `reference/` directory and `preflight_report.md` also live here. Preserve the existing Git repository and origin when scaffolding later phases.
 
 ## First demo
 
@@ -32,11 +34,14 @@ The demo should distinguish measured results, human labels, and any synthetic sc
 
 ## Dataset intake
 
-Upload the dataset as provided, together with a data dictionary or README if available. Useful context includes timestamp format, sensor units, asset or site identifiers, operating modes, and the meaning of any event labels. Unknown fields can be investigated after upload.
+The supplied datasets are `2024.zip`, `2025.zip`, and `2026.zip` in the user's Downloads directory. All three have readable ZIP directories containing alarm-log members; the exact source paths and archive inventory are recorded in the preflight report. They have not been ingested or moved. Data placement and companion metadata collection happen after Phase 2, before Phase 3. Use one of the supplied years in configuration rather than the original plan's default 2016.
+
+Useful context includes timestamp format, sensor units, asset or site identifiers, operating modes, and the meaning of any event labels. Actual columns and coverage will be discovered during Phase 3.
 
 Before choosing a detector, inspect sampling intervals, missing values, repeated records, sensor ranges, operating cycles, and label coverage. Keep a later replay interval separate when evaluating whether a correction generalizes.
 
 ## Project documents
 
+- [Phase 0 preflight report](preflight_report.md)
 - [Original elevator pitch](docs/PITCH.md)
 - [Implementation and presentation plan](docs/DEMO_PLAN.md)

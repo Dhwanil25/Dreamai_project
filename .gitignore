@@ -18,6 +18,8 @@ data/
 uploads/
 models/
 recordings/
+reference/
+*.zip
 *.sqlite
 *.sqlite3
 *.sqlite-wal
