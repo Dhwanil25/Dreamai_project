@@ -1,0 +1,30 @@
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+
+# Python and JavaScript development artifacts
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+node_modules/
+dist/
+build/
+
+# Local datasets, speech assets, and site knowledge
+data/
+uploads/
+models/
+recordings/
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm
+
+# Machine-specific files
+.DS_Store
+*.log
