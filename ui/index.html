@@ -31,6 +31,8 @@
       h1 { margin-top: 0; letter-spacing: 0.08em; }
       p { line-height: 1.6; }
       .status { color: #a9d9cc; font-weight: 600; }
+      nav { display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 1.5rem; }
+      a { color: #a9d9cc; text-underline-offset: 0.2em; }
     </style>
   </head>
   <body>
@@ -42,6 +44,10 @@
         detection, voice corrections, and local learning are not implemented.
       </p>
       <p>No dataset has been loaded. The demonstration scenario is still empty.</p>
+      <nav aria-label="Backend inspection">
+        <a href="/health">Backend health</a>
+        <a href="/openapi.json">API schema</a>
+      </nav>
     </main>
   </body>
 </html>

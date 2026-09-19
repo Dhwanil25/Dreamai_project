@@ -1,25 +1,45 @@
-"""Importable FastAPI application with Phase 7 route contracts only.
+"""Local scaffold serving a home page, health and explicit unavailable features.
 
-Start the process to inspect /openapi.json. Business routes deliberately raise
-NotImplementedError until their implementation phase; no replay or model starts
-at import time. Interactive API docs are disabled to avoid external CDN assets.
+Replay, detection and teaching remain unimplemented. Interactive API docs are
+disabled to avoid external CDN assets; /openapi.json exposes the contracts.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, NoReturn
 
-from fastapi import FastAPI, WebSocket
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, HTTPException, WebSocket
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
+
+from earshot.config import PROJECT_ROOT
 
 app = FastAPI(
     title="EARSHOT",
-    description="Phase 2 scaffold: route contracts only; business routes are not implemented.",
-    version="0.0.0",
+    description="Working scaffold home and health. Business operations return 501 until implemented.",
+    version="0.0.1",
     docs_url=None,
     redoc_url=None,
 )
+
+UNAVAILABLE_RESPONSE = {
+    501: {"description": "This feature has not been implemented in the current scaffold."}
+}
+
+
+def _unavailable_details(feature: str) -> dict[str, Any]:
+    """Describe an unfinished feature without inventing data or changing state."""
+    return {
+        "code": "not_implemented",
+        "feature": feature,
+        "message": f"{feature} is not available in the Phase 2 scaffold; its API is planned for Phase 7.",
+        "available_in_phase": 7,
+    }
+
+
+def _unavailable(feature: str) -> NoReturn:
+    """Return an intentional HTTP 501 response for an unfinished operation."""
+    raise HTTPException(status_code=501, detail=_unavailable_details(feature))
 
 
 class TeachRequest(BaseModel):
@@ -35,48 +55,61 @@ class KillswitchRequest(BaseModel):
 
 
 @app.get("/", response_class=HTMLResponse)
-async def index() -> str:
-    """Return the local operator-console HTML; later reads ui/index.html."""
-    raise NotImplementedError("Console serving is implemented in Phase 7")
+async def index() -> FileResponse:
+    """Serve the local scaffold page, independently of the working directory."""
+    return FileResponse(PROJECT_ROOT / "ui" / "index.html", media_type="text/html")
 
 
-@app.get("/stats")
+@app.get("/stats", responses=UNAVAILABLE_RESPONSE)
 async def stats() -> dict[str, Any]:
     """Return replay/policy and baseline statistics without changing state."""
-    raise NotImplementedError("Statistics serving is implemented in Phase 7")
+    _unavailable("statistics")
 
 
 @app.websocket("/stream")
 async def stream(websocket: WebSocket) -> None:
-    """Accept a local socket and send replay events/stats; later tracks clients."""
-    raise NotImplementedError("WebSocket replay is implemented in Phase 7")
+    """Explain that replay is unavailable, then close the socket normally."""
+    await websocket.accept()
+    await websocket.send_json({"type": "error", **_unavailable_details("replay")})
+    await websocket.close(code=1000, reason="Replay has not been implemented")
 
 
-@app.post("/teach")
+@app.post("/teach", responses=UNAVAILABLE_RESPONSE)
 async def teach(request: TeachRequest) -> dict[str, Any]:
     """Parse text, learn and rescore; later persist corrections and broadcast changes."""
-    raise NotImplementedError("Operator teaching is implemented in Phase 7")
+    _unavailable("teaching")
 
 
-@app.post("/undo/{rule_id}")
+@app.post("/undo/{rule_id}", responses=UNAVAILABLE_RESPONSE)
 async def undo(rule_id: str) -> dict[str, Any]:
     """Revoke an identified correction; later persist and broadcast revised verdicts."""
-    raise NotImplementedError("Correction undo is implemented in Phase 7")
+    _unavailable("undo")
 
 
-@app.post("/killswitch")
+@app.post("/killswitch", responses=UNAVAILABLE_RESPONSE)
 async def killswitch(request: KillswitchRequest) -> dict[str, Any]:
     """Set offline mode and return its status; later block outbound integrations."""
-    raise NotImplementedError("Runtime offline enforcement is implemented in Phase 7")
+    _unavailable("offline_controls")
 
 
-@app.get("/rules")
+@app.get("/rules", responses=UNAVAILABLE_RESPONSE)
 async def rules() -> list[dict[str, Any]]:
     """Return the active local correction ledger without changing its contents."""
-    raise NotImplementedError("Rule serving is implemented in Phase 7")
+    _unavailable("rules")
 
 
 @app.get("/health")
 async def health() -> dict[str, Any]:
-    """Return readiness, replay position and model version without side effects."""
-    raise NotImplementedError("Application health is implemented in Phase 7")
+    """Report server liveness and unavailable capabilities, without model claims."""
+    return {
+        "ok": True,
+        "status": "scaffold",
+        "phase": 2,
+        "features": {
+            "ingestion": False,
+            "replay": False,
+            "detection": False,
+            "teaching": False,
+            "voice": False,
+        },
+    }

@@ -6,9 +6,9 @@ EARSHOT is a local industrial monitoring project for a hackathon demo. Its plann
 
 ## Current status
 
-Phase 2 is complete: the virtual environment and pinned dependencies are installed, project-relative configuration works, and the package and FastAPI application import successfully. Thirteen configuration tests pass. Business functions and application routes intentionally raise `NotImplementedError`; ingestion, anomaly detection, teaching, speech and replay are not implemented yet. The two policy/parser test files are placeholders, not passing business tests.
+Phase 2 is complete: the virtual environment and pinned dependencies are installed, project-relative configuration works, and the package and FastAPI application import successfully. The backend serves the local scaffold page and a health response. Unfinished business endpoints return structured HTTP 501 responses; ingestion, anomaly detection, teaching, speech and replay are not implemented yet. Configuration and backend regression tests verify this boundary. The two policy/parser test files remain placeholders, not passing business tests.
 
-Phase 1's reference inventory is available locally at `reference/REUSE_NOTES.md`; reference clones remain Git-ignored. Phase 3 starts only after the dataset placement gate.
+Phase 1's reference inventory is available locally at `reference/REUSE_NOTES.md`; reference clones remain Git-ignored. The dataset placement gate is complete in the current workspace; Phase 3 ingestion has not started.
 
 This repository is both the workspace and project root. Execution-plan paths under `~/earshot-hackathon/earshot/` resolve here, and the plan's workspace-level `reference/` directory and `preflight_report.md` also live here. Preserve the existing Git repository and origin when scaffolding later phases.
 
@@ -38,7 +38,11 @@ Start the scaffold process:
 ./venv/bin/uvicorn earshot.server:app --host 127.0.0.1 --port 8000
 ```
 
-`http://127.0.0.1:8000/openapi.json` exposes the route contracts. `/`, `/health`, `/teach` and the other application routes are stubs and will fail until Phase 7. The static placeholder is in `ui/index.html`; serving it is deferred with the other routes. Interactive API documentation is disabled so the scaffold does not load CDN assets.
+Open `http://127.0.0.1:8000/` to see the scaffold page. `/health` returns HTTP 200 with `status: "scaffold"` and explicit unavailable feature flags; `ok: true` means the server is responding, not that the monitoring pipeline is ready. `/openapi.json` exposes the route contracts. Interactive API documentation is disabled so the scaffold does not load CDN assets.
+
+`/stats`, `/rules`, `/teach`, `/undo/{rule_id}` and `/killswitch` return HTTP 501 with a structured `not_implemented` explanation until their implementation phase. `/stream` sends an explanatory error message and closes normally. These responses do not train a model, suppress alarms or change offline controls.
+
+If a server was running before a code update, stop it with Ctrl+C and rerun the startup command. The original Phase 2 route stubs raised unhandled `NotImplementedError`, causing HTTP 500 even on the home page and health endpoint; the scaffold now handles these cases explicitly.
 
 ## First demo
 
@@ -64,9 +68,9 @@ The demo should distinguish measured results, human labels, and any synthetic sc
 
 ## Dataset intake
 
-The supplied datasets are `2024.zip`, `2025.zip`, and `2026.zip` in the user's Downloads directory. All three have readable ZIP directories containing alarm-log members; the exact source paths and archive inventory are recorded in the preflight report. They have not been ingested or moved. `data/raw/` and `data/processed/` exist and are empty at the end of Phase 2.
+All eight supplied files are now copied into this workspace's `data/raw/`: the 2024, 2025 and 2026 year ZIPs, the optional ShutdownDuration ZIP, and the four companion CSVs. Copies were SHA-256 verified, original Downloads files were preserved, and archives remain compressed. The ignored `data/dataset_placement_manifest.json` records this local placement. No dataset has been ingested; `data/processed/` is still empty.
 
-For the dataset gate, place `2025.zip` in this repository's `data/raw/` without unzipping it. The other two supplied archives can also be placed there for later use. Include these four companion files with their original names:
+When setting up another checkout, place `2025.zip` in its `data/raw/` without unzipping it. The other supplied archives are optional for that configured year. Include these four companion files with their original names:
 
 - `Hill_of_Towie_alarms_description.csv`
 - `Hill_of_Towie_tables_description.csv`

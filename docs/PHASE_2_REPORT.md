@@ -2,6 +2,8 @@
 
 Completed: 2026-09-19. Result: **PASS**. Phase 3 has not started.
 
+Follow-up fix: the initial root and health route stubs returned HTTP 500 when opened. The backend now serves the scaffold page and health with HTTP 200, returns structured HTTP 501 for unfinished operations, and explains unavailable replay before closing its WebSocket. The validation below records the original Phase 2 snapshot; see README and `tests/test_server.py` for the current backend behavior.
+
 ## Delivered
 
 - Existing GitHub-connected repository preserved as the project root.
