@@ -1,7 +1,7 @@
-"""Phase 5 scaffold serving a home page, health and unavailable live APIs.
+"""Phase 6 scaffold serving a home page, health and unavailable live APIs.
 
-Offline ingestion, detection and local teaching are available as library
-capabilities. Replay and voice remain unimplemented; live APIs await Phase 7.
+Offline ingestion, detection, local teaching and text parsing are available as
+library capabilities. Replay and voice remain unimplemented; live APIs await Phase 7.
 Interactive API docs are disabled to avoid external CDN assets;
 /openapi.json exposes the contracts.
 """
@@ -19,8 +19,8 @@ from earshot.config import PROJECT_ROOT
 app = FastAPI(
     title="EARSHOT",
     description=(
-        "Phase 5 local teaching engine: offline ingestion, detection and teaching "
-        "are available as library capabilities. "
+        "Phase 6 text teaching parser: offline ingestion, detection, teaching and "
+        "text parsing are available as library capabilities. "
         "The scaffold serves home and health; live operations return 501 until implemented."
     ),
     version="0.0.1",
@@ -38,7 +38,7 @@ def _unavailable_details(feature: str) -> dict[str, Any]:
     return {
         "code": "not_implemented",
         "feature": feature,
-        "message": f"The {feature} API is not available in the Phase 5 scaffold; it is planned for Phase 7.",
+        "message": f"The {feature} API is not available in the Phase 6 scaffold; it is planned for Phase 7.",
         "available_in_phase": 7,
     }
 
@@ -110,12 +110,13 @@ async def health() -> dict[str, Any]:
     return {
         "ok": True,
         "status": "scaffold",
-        "phase": 5,
+        "phase": 6,
         "features": {
             "ingestion": True,
             "replay": False,
             "detection": True,
             "teaching": True,
+            "parsing": True,
             "voice": False,
         },
     }

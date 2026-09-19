@@ -2,17 +2,19 @@
 
 **The industrial AI you teach by talking to it — and it never phones home.**
 
-EARSHOT is a local industrial monitoring project for a hackathon demo. Its anomaly detectors and teaching engine run locally; sensor replay, natural-language parsing and voice integration are still upcoming.
+EARSHOT is a local industrial monitoring project for a hackathon demo. Its text parser, anomaly detectors and teaching engine run locally; sensor replay and voice integration are still upcoming.
 
 ## Current status
 
-Phase 5 implements validated correction rules, Z-score and Half-Space Trees detectors, and a local policy engine with a River logistic classifier. Teaching updates classifier weights, rescoring changes buffered visibility, and undo removes the correction's training batch. Rules and training batches persist locally. On 2,000 real alarm records, a turbine-specific correction suppressed **17 matching events in 33.016 ms** while keeping the same code visible on other turbines. All **215 tests pass**. See [the Phase 5 report](docs/PHASE_5_REPORT.md) for complete validation output and limitations.
+Phase 6 turns operator text into a validated correction proposal using the site's real vocabulary. It recognizes turbine aliases, supported alarm descriptions and suppress/collapse/escalate instructions; unknown, ambiguous or unsupported requests return no rule. Offline parsing needs no keys or network. An optional compatible online parser has bounded retries and falls back locally. See [the Phase 6 report](docs/PHASE_6_REPORT.md) for validation and the text-to-learning demonstration.
+
+Phase 5 implements validated correction rules, Z-score and Half-Space Trees detectors, and a local policy engine with a River logistic classifier. Teaching updates classifier weights, rescoring changes buffered visibility, and undo removes the correction's training batch. Rules and training batches persist locally. On 2,000 real alarm records, a turbine-specific correction suppressed **17 matching events in 33.016 ms** while keeping the same code visible on other turbines. Its **215 tests passed**. See [the Phase 5 report](docs/PHASE_5_REPORT.md) for complete validation output and limitations.
 
 Phase 4 provides the reproducible alarm baseline. January–March 2025 contains **68,891 alarm rows**, averaging **31.933677 logged records/hour site-wide**. The top ten codes account for **92.022180%** of records. These are event-log measurements; the dataset does not establish false-alarm rates or operator workload. See [the Phase 4 report](docs/PHASE_4_REPORT.md) for methodology and verification.
 
 Phase 3 also produced **50,327,215 numeric SCADA readings**. All 21 known turbines are present; two alarms have the additional unmapped station ID `91` and remain in site-wide totals. The turbine-rate denominator uses the 21 metadata turbines and excludes those two records. See [the Phase 3 report](docs/PHASE_3_REPORT.md) for ingestion details.
 
-The backend serves the local scaffold page and a health response. Detection and teaching are available through the Python library and tests; live business endpoints return structured HTTP 501 responses until Phase 7. Natural-language parsing, speech and replay remain unimplemented. The parser test file remains a placeholder; the policy suite now contains 31 real-data checks.
+The backend serves the local scaffold page and a health response. Text parsing, detection and teaching are available through the Python library and tests; live business endpoints return structured HTTP 501 responses until Phase 7. Speech and replay remain unimplemented.
 
 Phase 1's reference inventory is available locally at `reference/REUSE_NOTES.md`; reference clones remain Git-ignored. Raw data, processed datasets and their detailed local reports are also Git-ignored.
 
@@ -36,7 +38,7 @@ cp .env.example .env
 
 The config loader finds `config.yaml` relative to its module, resolves data paths against the project root, and reads the root `.env` without replacing existing environment variables. Schema mappings now contain the column names discovered from the real files. The selected year is 2025, months January–March.
 
-`.env.example` uses `EARSHOT_OFFLINE=1`, preserving the local-only requirement rather than the original plan's online default. Keys are optional and unused by this scaffold. The example retains the plan's future provider settings; their availability has not been tested. Runtime offline enforcement and local speech still need implementation.
+`.env.example` uses `EARSHOT_OFFLINE=1`. The parser enforces this before constructing a provider client and before each call; local speech still needs implementation. With offline mode off and all three `LLM_*` settings populated, the optional parser sends the utterance and controlled vocabulary to the configured endpoint. Policy learning, event data and model weights remain local. Keep offline mode on for the never-phones-home demonstration. No LLM credentials were available for live provider validation; its request, validation and fallback paths were tested with local mocks.
 
 Start the scaffold process:
 
@@ -44,7 +46,7 @@ Start the scaffold process:
 ./venv/bin/uvicorn earshot.server:app --host 127.0.0.1 --port 8000
 ```
 
-Open `http://127.0.0.1:8000/` to see the scaffold page. `/health` returns HTTP 200 with `status: "scaffold"`, `phase: 5` and ingestion, detection and teaching flags set to true. These flags describe available Python libraries, not live endpoints or automatic dataset checks. `ok: true` means the server is responding. `/openapi.json` exposes the route contracts. Interactive API documentation is disabled so the scaffold does not load CDN assets.
+Open `http://127.0.0.1:8000/` to see the scaffold page. `/health` returns HTTP 200 with `status: "scaffold"`, `phase: 6` and ingestion, parsing, detection and teaching flags set to true. These flags describe available Python libraries, not live endpoints or automatic dataset checks. `ok: true` means the server is responding. `/openapi.json` exposes the route contracts. Interactive API documentation is disabled so the scaffold does not load CDN assets.
 
 `/stats`, `/rules`, `/teach`, `/undo/{rule_id}` and `/killswitch` return HTTP 501 with a structured `not_implemented` explanation until their implementation phase. `/stream` sends an explanatory error message and closes normally. These responses do not train a model, suppress alarms or change offline controls.
 
@@ -137,6 +139,37 @@ The **12/hour operator-console reference** is an approximate average workload be
 
 Only aggregate `demo/baseline_stats.json` is tracked for later UI use. Raw records and the detailed local report remain Git-ignored. The `/stats` API and dashboard integration are still scheduled for later phases.
 
+## Teach with text and see what changes
+
+Run this from the repository root:
+
+```bash
+EARSHOT_OFFLINE=1 ./venv/bin/python scripts/demo_teaching.py
+```
+
+It parses “ignore the cable untwist alarm on turbine four,” displays the proposed rule, and applies it to 2,000 real events in a temporary local ledger. The output shows before/after counts, changed classifier weights, a later matching event, the same code on another turbine, restart and undo. It leaves your saved site corrections unchanged. Try another supported sentence with `--text "group pitch lubrication on turbine 4"`.
+
+Teaching is a sequence:
+
+1. `parse_utterance(text, context)` resolves words against real metadata. Here, “turbine four” becomes station `2304513` and “cable untwist” becomes code `10105`. Parsing only proposes a rule.
+2. `policy.learn(rule)` saves the correction, labels matching buffered events as nuisance examples and other eligible events as counter-examples, then updates the local River logistic classifier. The model version increments.
+3. The policy rescans its buffer and applies the correction to future matching events. Ordinary code rules take effect immediately; the classifier also changes its weights. A `learned` pattern uses classifier probability within its authorized scope.
+4. `policy.undo(rule.rule_id)` removes the correction, rebuilds the classifier from remaining training batches and restores buffered visibility.
+
+This is supervised feedback from the operator's instruction. It does not prove an event is a false alarm or train a general-purpose language model. Voice recording and the browser's teach button are later phases.
+
+The cached vocabulary contains 22 observed station IDs, 192 observed codes, seven documented alarm descriptions and metadata-derived aliases for the 21 known turbines. Station `91` has no invented turbine number. Undocumented codes can be referenced explicitly by number, but their meanings are not guessed. The generator-winding-temperature example in the plan has no matching description here, so it returns no rule.
+
+Rebuild the cache whenever the source dataset changes, then verify:
+
+```bash
+./venv/bin/python scripts/build_vocabulary.py
+EARSHOT_OFFLINE=1 ./venv/bin/pytest tests/test_parse.py -v
+./venv/bin/pytest -q
+```
+
+Supported offline corrections name one observed alarm class and optionally one turbine, with suppress, collapse or escalate intent. Different named assets/codes, unknown identities, conflicting intentions, exclusions and unsupported time/sensor conditions return no rule. Negative suppression such as “don't ignore” becomes escalation when the alarm is resolvable. Collapse uses the configured 60-second per-turbine window; it does not infer a physical fault family. Confidence values 0.6 offline and at least 0.85 online are parser labels, not measured correctness probabilities.
+
 ## Verify the local teaching engine
 
 With the Phase 3 Parquet files present, run:
@@ -189,6 +222,7 @@ PY
 
 ## Project documents
 
+- [Phase 6 text parsing and teaching validation](docs/PHASE_6_REPORT.md)
 - [Phase 5 teaching engine validation](docs/PHASE_5_REPORT.md)
 - [Phase 4 baseline validation](docs/PHASE_4_REPORT.md)
 - [Phase 3 ingestion validation](docs/PHASE_3_REPORT.md)

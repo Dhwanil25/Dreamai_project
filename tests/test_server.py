@@ -1,4 +1,4 @@
-"""Regression checks for an honest, usable Phase 5 server scaffold."""
+"""Regression checks for an honest, usable Phase 6 server scaffold."""
 
 import pytest
 from fastapi.testclient import TestClient
@@ -32,7 +32,11 @@ def test_root_serves_local_ui_independently_of_launch_directory(
         encoding="utf-8"
     )
     assert "EARSHOT" in response.text
-    assert "Phase 5 local teaching engine" in response.text
+    assert "Phase 6 text teaching parser" in response.text
+    assert "parse_utterance(text, context)" in response.text
+    assert "policy.learn(rule)" in response.text
+    assert "tests/test_parse.py" in response.text
+    assert "docs/PHASE_6_REPORT.md" in response.text
     assert "tests/test_policy.py" in response.text
     assert "docs/PHASE_5_REPORT.md" in response.text
     assert "scripts/compute_baseline.py" in response.text
@@ -47,12 +51,13 @@ def test_health_reports_library_capabilities_without_claiming_live_apis_are_read
     assert response.json() == {
         "ok": True,
         "status": "scaffold",
-        "phase": 5,
+        "phase": 6,
         "features": {
             "ingestion": True,
             "replay": False,
             "detection": True,
             "teaching": True,
+            "parsing": True,
             "voice": False,
         },
     }
@@ -79,7 +84,7 @@ def test_unimplemented_features_return_structured_501(
     assert detail["available_in_phase"] == 7
     assert detail["feature"] == feature
     assert isinstance(detail["message"], str) and detail["message"].strip()
-    assert "Phase 5 scaffold" in detail["message"]
+    assert "Phase 6 scaffold" in detail["message"]
 
 
 def test_replay_socket_explains_unavailability_and_closes_cleanly(client):
@@ -91,7 +96,7 @@ def test_replay_socket_explains_unavailability_and_closes_cleanly(client):
         assert message["feature"] == "replay"
         assert message["available_in_phase"] == 7
         assert isinstance(message["message"], str) and message["message"].strip()
-        assert "Phase 5 scaffold" in message["message"]
+        assert "Phase 6 scaffold" in message["message"]
         with pytest.raises(WebSocketDisconnect) as closed:
             websocket.receive_json()
         assert closed.value.code == 1000

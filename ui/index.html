@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>EARSHOT — Phase 5 local teaching engine</title>
+    <title>EARSHOT — Phase 6 text teaching parser</title>
     <style>
       :root {
         color-scheme: dark;
@@ -38,11 +38,18 @@
   <body>
     <main>
       <h1>EARSHOT</h1>
-      <p class="status">Phase 5 local teaching engine</p>
+      <p class="status">Phase 6 text teaching parser</p>
       <p>
-        Local ingestion, anomaly detection, and operator teaching are available
-        in the Python library. Sensor replay and voice capture remain unavailable.
+        Local ingestion, anomaly detection, operator teaching, and text parsing
+        are available in the Python library. Sensor replay and voice capture remain unavailable.
         Live APIs are planned for Phase 7.
+      </p>
+      <p>
+        In Python, <code>parse_utterance(text, context)</code> proposes a rule
+        from the real dataset vocabulary. Apply an accepted rule with
+        <code>policy.learn(rule)</code>. Exercise parsing with
+        <code>tests/test_parse.py</code> and read
+        <code>docs/PHASE_6_REPORT.md</code> for the results.
       </p>
       <p>
         Exercise the local teaching engine with <code>tests/test_policy.py</code>

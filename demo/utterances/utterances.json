@@ -1,0 +1,69 @@
+{
+  "source": {
+    "alarms": "data/processed/alarms.parquet",
+    "metadata": "data/raw/Hill_of_Towie_turbine_metadata.csv",
+    "note": "Expected identifiers and descriptions were checked against the supplied records. T04 maps to station 2304513. Utterances are parser test inputs, not source alarm labels."
+  },
+  "fixtures": [
+    {
+      "id": "untwist_turbine_four",
+      "text": "ignore the cable untwist alarm on turbine four",
+      "expected": {"scope": {"turbine_id": "2304513", "alarm_code": 10105, "signal": null}, "action": "suppress"},
+      "basis": "10105: Stopped, untwisting cables; metadata T04."
+    },
+    {
+      "id": "generator_cut_in_all_turbines",
+      "text": "generator cut-in is just the wind changing, stop showing me those",
+      "expected": {"scope": {"turbine_id": null, "alarm_code": 20, "signal": null}, "action": "suppress"},
+      "basis": "20: Large generator Cut-in; no turbine was specified."
+    },
+    {
+      "id": "icing_collapse",
+      "text": "when it is icing give me one line per turbine not six",
+      "expected": {"scope": {"turbine_id": null, "alarm_code": 8230, "signal": null}, "action": "collapse"},
+      "basis": "8230: Ice detection: Low torque is the only present documented ice code. This targets that code alone; it does not assign meanings to undocumented codes or assert a six-code family."
+    },
+    {
+      "id": "unmapped_temperature_negation",
+      "text": "never suppress the generator winding temperature alarms",
+      "expected": null,
+      "basis": "The present alarm vocabulary has no documented generator-winding-temperature code. A SCADA temperature name does not establish an alarm-code mapping."
+    },
+    {
+      "id": "unparseable_weather",
+      "text": "what is the weather like",
+      "expected": null,
+      "basis": "No correction action or known alarm was requested."
+    },
+    {
+      "id": "low_wind_t04",
+      "text": "mute the low wind alarm on T04",
+      "expected": {"scope": {"turbine_id": "2304513", "alarm_code": 1005, "signal": null}, "action": "suppress"},
+      "basis": "1005: Availability - low wind; metadata T04."
+    },
+    {
+      "id": "pitch_turbine_4",
+      "text": "group the pitch lubrication alarm on turbine 4",
+      "expected": {"scope": {"turbine_id": "2304513", "alarm_code": 3130, "signal": null}, "action": "collapse"},
+      "basis": "3130: Pitch lubrication; metadata T04."
+    },
+    {
+      "id": "high_wind_number_four",
+      "text": "always tell me about high wind on number four",
+      "expected": {"scope": {"turbine_id": "2304513", "alarm_code": 8000, "signal": null}, "action": "escalate"},
+      "basis": "8000: Windspeed too high to operate; metadata T04."
+    },
+    {
+      "id": "dont_ignore_cut_in",
+      "text": "don't ignore generator cut-in on turbine four",
+      "expected": {"scope": {"turbine_id": "2304513", "alarm_code": 20, "signal": null}, "action": "escalate"},
+      "basis": "20: Large generator Cut-in; negative suppression intent must preserve visibility."
+    },
+    {
+      "id": "generator_cut_out_t04",
+      "text": "ignore fast cut-out of generator on T04",
+      "expected": {"scope": {"turbine_id": "2304513", "alarm_code": 25, "signal": null}, "action": "suppress"},
+      "basis": "25: Fast cut-out of generator; metadata T04."
+    }
+  ]
+}
